@@ -1,0 +1,87 @@
+# Dependencies
+/vendor/
+composer.lock
+
+# Testing
+.phpunit.cache/
+coverage-html/
+coverage.xml
+coverage.txt
+phpunit-report.xml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+.tmp/
+*.tmp
+
+# Local configuration (for testing purposes)
+.commitlintrc.json.test
+
+# Build artifacts
+/build/
+/dist/
+
+# Cache
+.cache/
+.php-cs-fixer.cache
+
+# GitHub Workflows (keep in repo)
+!.github/
+
+# Example configurations (keep in repo)
+!examples/
+
+# Editor files
+*.sublime-project
+*.sublime-workspace
+.vscode/settings.json
+.vscode/tasks.json
+.vscode/launch.json
+.vscode/extensions.json
+
+# PHP Storm
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/dictionaries
+.idea/shelf
+.idea/dataSources*
+.idea/httpRequests/
+
+# Vagrant
+.vagrant/
+
+# Docker
+docker-compose.override.yml
+
+# Local environment files
+.env
+.env.local
+.env.*.local
+
+# Coverage reports
+coverage/
+clover.xml
+
+# Security checker
+.security.checker.cache
+
+# Backup files
+*.backup
+*.bak
+*.old
+
+# Lock files (except composer.lock which is needed)
+package-lock.json
+yarn.lock 

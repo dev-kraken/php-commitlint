@@ -1,0 +1,10 @@
+{
+  "rules": {
+    "type": {
+      "allowed": ["feat", "fix", "docs", "chore"]
+    },
+    "subject": {
+      "max_length": 50
+    }
+  }
+}

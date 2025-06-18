@@ -1,0 +1,20 @@
+parameters:
+    level: 8
+    paths:
+        - src
+        - tests
+    excludePaths:
+        - tests/Pest.php
+    ignoreErrors:
+        # Allow Pest test globals
+        - '#Function createConfig not found#'
+        - '#Undefined variable: \$this#'
+        # Ignore missing Composer classes in dev mode
+        - '#Parameter .* has invalid type Composer\\Script\\Event#'
+        - '#Call to method getIO\(\) on an unknown class Composer\\Script\\Event#'
+        # Ignore missing generics and iterables for now
+        -
+            identifier: missingType.iterableValue
+        -
+            identifier: missingType.generics
+    reportUnmatchedIgnoredErrors: false 
