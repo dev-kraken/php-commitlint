@@ -12,6 +12,9 @@ class CommitMessage
     private ?string $subject = null;
     private ?string $body = null;
     private ?string $footer = null;
+    /**
+     * @var array<int, string>
+     */
     private array $lines;
 
     public function __construct(string $message)
@@ -51,6 +54,9 @@ class CommitMessage
         return $this->footer;
     }
 
+    /**
+     * @return array<int, string>
+     */
     public function getLines(): array
     {
         return $this->lines;

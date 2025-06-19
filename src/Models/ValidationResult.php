@@ -6,6 +6,9 @@ namespace DevKraken\PhpCommitlint\Models;
 
 class ValidationResult
 {
+    /**
+     * @param array<int, string> $errors
+     */
     public function __construct(
         private bool $isValid,
         private array $errors,
@@ -19,6 +22,9 @@ class ValidationResult
         return $this->isValid;
     }
 
+    /**
+     * @return array<int, string>
+     */
     public function getErrors(): array
     {
         return $this->errors;
@@ -50,6 +56,9 @@ class ValidationResult
         $this->isValid = false;
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     public function toArray(): array
     {
         return [

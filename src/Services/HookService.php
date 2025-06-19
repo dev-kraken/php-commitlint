@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace DevKraken\PhpCommitlint\Services;
 
+use RuntimeException;
+
 class HookService
 {
-    private const HOOK_MARKER = '# PHP CommitLint Hook';
-    private const HOOKS_DIR = '.git/hooks';
+    private const string HOOK_MARKER = '# PHP CommitLint Hook';
+    private const string HOOKS_DIR = '.git/hooks';
 
     public function isGitRepository(): bool
     {
@@ -36,7 +38,7 @@ class HookService
             $hookPath = self::HOOKS_DIR . '/' . $hook;
             if (file_exists($hookPath)) {
                 $content = file_get_contents($hookPath);
-                if ($content !== false && strpos($content, self::HOOK_MARKER) !== false) {
+                if ($content !== false && str_contains($content, self::HOOK_MARKER)) {
                     return true;
                 }
             }
@@ -64,7 +66,7 @@ class HookService
             $hookPath = self::HOOKS_DIR . '/' . $hook;
             if (file_exists($hookPath)) {
                 $content = file_get_contents($hookPath);
-                if ($content !== false && strpos($content, self::HOOK_MARKER) !== false) {
+                if ($content !== false && str_contains($content, self::HOOK_MARKER)) {
                     unlink($hookPath);
                 }
             }
@@ -82,7 +84,7 @@ class HookService
 
             if (file_exists($hookPath)) {
                 $content = file_get_contents($hookPath);
-                $installed = $content !== false && strpos($content, self::HOOK_MARKER) !== false;
+                $installed = $content !== false && str_contains($content, self::HOOK_MARKER);
             }
 
             $hooks[$hook] = [
@@ -96,15 +98,44 @@ class HookService
 
     public function addCustomHook(string $hookName, string $command): void
     {
+        // Validate hook name to prevent path traversal
+        if (!preg_match('/^[a-z-]+$/', $hookName)) {
+            throw new \InvalidArgumentException('Invalid hook name. Only lowercase letters and hyphens allowed.');
+        }
+
+        // Validate command to prevent command injection
+        if (strlen($command) > 1000) {
+            throw new \InvalidArgumentException('Command too long. Maximum 1000 characters allowed.');
+        }
+
+        $sanitizedCommand = !empty($command) ? $command : null; // Ensure $sanitizedCommand is a string
+
+        // Sanitize command for security by removing dangerous patterns entirely
+        $sanitizedCommand = preg_replace('/rm\s+-rf\s*\/[^"\';\s]*/', '', $sanitizedCommand ?? '');
+        $sanitizedCommand = preg_replace('/rm\s+-rf\s*\//', '', $sanitizedCommand ?? '');
+
+        // Clean up any resulting extra spaces or semicolons
+        $sanitizedCommand = preg_replace('/\s+/', ' ', $sanitizedCommand ?? '');
+        $sanitizedCommand = preg_replace('/;\s*;/', ';', $sanitizedCommand ?? '');
+        $sanitizedCommand = trim($sanitizedCommand ?? '', '; ');
+
+        // Escape the sanitized command for shell safety
+        $escapedCommand = escapeshellarg($sanitizedCommand);
+
         $hookPath = self::HOOKS_DIR . '/' . $hookName;
 
         if (file_exists($hookPath)) {
-            // Append to existing hook
+            // Read existing hook
             $content = file_get_contents($hookPath);
-            if ($content === false || strpos($content, self::HOOK_MARKER) === false) {
-                // Not our hook or failed to read, create backup
-                if ($content !== false) {
-                    rename($hookPath, $hookPath . '.backup');
+            if ($content === false) {
+                throw new RuntimeException("Failed to read existing hook: {$hookPath}");
+            }
+
+            if (!str_contains($content, self::HOOK_MARKER)) {
+                // Not our hook, create backup
+                $backupPath = $hookPath . '.backup.' . time();
+                if (!rename($hookPath, $backupPath)) {
+                    throw new RuntimeException("Failed to create backup: {$backupPath}");
                 }
                 $content = $this->createHookTemplate($hookName);
             }
@@ -112,12 +143,25 @@ class HookService
             $content = $this->createHookTemplate($hookName);
         }
 
-        // Add custom command
-        $content .= "\n# Custom command\n";
-        $content .= $command . "\n";
+        // Insert custom command before any exit statements
+        $customCommand = sprintf("\n# Custom command - Added %s\n%s\n", date('Y-m-d H:i:s'), $escapedCommand);
 
-        file_put_contents($hookPath, $content);
-        chmod($hookPath, 0o755);
+        // Find the last exit statement and insert before it
+        if (preg_match('/(\n.*exit\s+\d+\s*(?:#.*)?)\s*$/s', $content, $matches)) {
+            // Insert before the exit statement
+            $content = str_replace($matches[1], $customCommand . $matches[1], $content);
+        } else {
+            // No exit statement found, append to end
+            $content .= $customCommand;
+        }
+
+        if (file_put_contents($hookPath, $content) === false) {
+            throw new RuntimeException("Failed to write hook file: {$hookPath}");
+        }
+
+        if (!chmod($hookPath, 0o755)) {
+            throw new RuntimeException("Failed to make hook executable: {$hookPath}");
+        }
     }
 
     public function removeCustomHook(string $hookName): void
@@ -126,7 +170,7 @@ class HookService
 
         if (file_exists($hookPath)) {
             $content = file_get_contents($hookPath);
-            if ($content !== false && strpos($content, self::HOOK_MARKER) !== false) {
+            if ($content !== false && str_contains($content, self::HOOK_MARKER)) {
                 // Check if backup exists
                 $backupPath = $hookPath . '.backup';
                 if (file_exists($backupPath)) {
@@ -142,8 +186,12 @@ class HookService
 
     private function ensureHooksDirectory(): void
     {
-        if (!is_dir(self::HOOKS_DIR)) {
-            mkdir(self::HOOKS_DIR, 0o755, true);
+        if (!is_dir(self::HOOKS_DIR) && !mkdir($concurrentDirectory = self::HOOKS_DIR, 0o755, true) && !is_dir($concurrentDirectory)) {
+            throw new RuntimeException('Failed to create hooks directory: ' . self::HOOKS_DIR);
+        }
+
+        if (!is_writable(self::HOOKS_DIR)) {
+            throw new RuntimeException('Hooks directory is not writable: ' . self::HOOKS_DIR);
         }
     }
 
@@ -152,8 +200,13 @@ class HookService
         $hookPath = self::HOOKS_DIR . '/commit-msg';
         $content = $this->createCommitMsgHookContent();
 
-        file_put_contents($hookPath, $content);
-        chmod($hookPath, 0o755);
+        if (file_put_contents($hookPath, $content) === false) {
+            throw new RuntimeException("Failed to create commit-msg hook: {$hookPath}");
+        }
+
+        if (!chmod($hookPath, 0o755)) {
+            throw new RuntimeException("Failed to make commit-msg hook executable: {$hookPath}");
+        }
     }
 
     private function installPreCommitHook(): void
@@ -161,8 +214,13 @@ class HookService
         $hookPath = self::HOOKS_DIR . '/pre-commit';
         $content = $this->createPreCommitHookContent();
 
-        file_put_contents($hookPath, $content);
-        chmod($hookPath, 0o755);
+        if (file_put_contents($hookPath, $content) === false) {
+            throw new RuntimeException("Failed to create pre-commit hook: {$hookPath}");
+        }
+
+        if (!chmod($hookPath, 0o755)) {
+            throw new RuntimeException("Failed to make pre-commit hook executable: {$hookPath}");
+        }
     }
 
     private function createCommitMsgHookContent(): string
@@ -192,7 +250,7 @@ class HookService
             fi
 
             # Validate commit message
-            {$phpBinary} {$commitlintBinary} validate --file="\$1" --quiet
+            {$phpBinary} {$commitlintBinary} validate --file="\$1"
 
             # Exit with the same code as the validation
             exit \$?
@@ -240,36 +298,55 @@ class HookService
 
     private function findPhpBinary(): string
     {
+        // First try environment variable
+        $phpFromEnv = $_SERVER['PHP_BINARY'] ?? null;
+        if ($phpFromEnv && is_executable($phpFromEnv)) {
+            return $phpFromEnv;
+        }
+
+        // Then try common locations
         $candidates = [
-            trim(`which php 2>/dev/null`),
             '/usr/bin/php',
             '/usr/local/bin/php',
-            'php',
+            '/opt/homebrew/bin/php', // For macOS with Homebrew
+            '/usr/bin/php8.3',
+            '/usr/bin/php8.2',
+            '/usr/bin/php8.1',
         ];
 
         foreach ($candidates as $candidate) {
-            if ($candidate && is_executable($candidate)) {
+            if (is_executable($candidate)) {
                 return $candidate;
             }
         }
 
-        return 'php'; // Fallback
+        // Last resort: try which command (safer approach)
+        $whichResult = @exec('which php 2>/dev/null', $output, $exitCode);
+        if ($exitCode === 0 && !empty($whichResult) && is_executable($whichResult)) {
+            return $whichResult;
+        }
+
+        return '/usr/bin/php'; // Better fallback for most Linux systems
     }
 
     private function findCommitlintBinary(): string
     {
+        $cwd = getcwd();
         $candidates = [
-            './bin/php-commitlint',        // Development mode
-            'vendor/bin/php-commitlint',   // When installed as dependency
-            './vendor/bin/php-commitlint', // Alternative vendor path
+            $cwd . '/bin/php-commitlint',          // Development mode (absolute)
+            $cwd . '/vendor/bin/php-commitlint',   // When installed as dependency (absolute)
+            './bin/php-commitlint',                // Development mode (relative fallback)
+            'vendor/bin/php-commitlint',           // Dependency mode (relative fallback)
         ];
 
         foreach ($candidates as $candidate) {
-            if (file_exists($candidate)) {
-                return $candidate;
+            if (file_exists($candidate) && is_executable($candidate)) {
+                // Always return absolute path
+                return realpath($candidate) ?: $candidate;
             }
         }
 
-        return './bin/php-commitlint'; // Fallback for development
+        // Return absolute path for development as fallback
+        return $cwd . '/bin/php-commitlint';
     }
 }

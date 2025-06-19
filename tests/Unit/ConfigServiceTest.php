@@ -6,6 +6,9 @@ use DevKraken\PhpCommitlint\Services\ConfigService;
 
 beforeEach(function () {
     $this->configService = new ConfigService();
+    $this->tempDir = createTempDirectory();
+    $this->originalCwd = getcwd();
+    chdir($this->tempDir);
 
     // Clean up any existing config files
     if (file_exists('.commitlintrc.json')) {
@@ -14,21 +17,22 @@ beforeEach(function () {
 });
 
 afterEach(function () {
-    // Clean up test files
-    if (file_exists('.commitlintrc.json')) {
-        unlink('.commitlintrc.json');
-    }
+    chdir($this->originalCwd);
+    cleanupTempPath($this->tempDir);
+
+    // Clear the config cache
+    $this->configService->clearCache();
 });
 
 describe('ConfigService', function () {
     it('returns default config when no config file exists', function () {
         $config = $this->configService->loadConfig();
 
-        expect($config)->toHaveKey('rules');
-        expect($config)->toHaveKey('auto_install');
-        expect($config['rules'])->toHaveKey('type');
-        expect($config['rules']['type']['allowed'])->toContain('feat');
-        expect($config['rules']['type']['allowed'])->toContain('fix');
+        expect($config)->toHaveKey('rules')
+            ->and($config)->toHaveKey('auto_install')
+            ->and($config['rules'])->toHaveKey('type')
+            ->and($config['rules']['type']['allowed'])->toContain('feat')
+            ->and($config['rules']['type']['allowed'])->toContain('fix');
     });
 
     it('creates default config file', function () {
@@ -41,6 +45,7 @@ describe('ConfigService', function () {
         $content = file_get_contents('.commitlintrc.json');
         expect($content)->not()->toBeFalse();
         $config = json_decode((string) $content, true);
+        assert(is_array($config));
 
         expect($config)->toHaveKey('rules');
         expect($config['auto_install'])->toBeFalse();
@@ -59,6 +64,7 @@ describe('ConfigService', function () {
         file_put_contents('.commitlintrc.json', json_encode($customConfig));
 
         $config = $this->configService->loadConfig();
+        assert(is_array($config));
 
         expect($config['auto_install'])->toBeTrue();
         expect($config['rules']['type']['allowed'])->toContain('custom');
@@ -82,6 +88,7 @@ describe('ConfigService', function () {
         file_put_contents('.commitlintrc.json', json_encode($customConfig));
 
         $config = $this->configService->loadConfig();
+        assert(is_array($config));
 
         // Custom values should override defaults
         expect($config['rules']['type']['allowed'])->toBe(['custom']);
@@ -96,7 +103,7 @@ describe('ConfigService', function () {
         file_put_contents('.commitlintrc.json', 'invalid json content');
 
         expect(fn () => $this->configService->loadConfig())
-            ->toThrow(RuntimeException::class, 'Failed to load configuration: Invalid JSON in config file: Syntax error');
+            ->toThrow(RuntimeException::class, 'Failed to load configuration: Invalid JSON in .commitlintrc.json: Syntax error');
     });
 
     it('checks if config file exists', function () {
@@ -124,6 +131,7 @@ describe('ConfigService', function () {
         $content = file_get_contents('.commitlintrc.json');
         expect($content)->not()->toBeFalse();
         $saved = json_decode((string) $content, true);
+        assert(is_array($saved));
         expect($saved['auto_install'])->toBeTrue();
         expect($saved['rules']['type']['allowed'])->toContain('custom');
     });
@@ -163,5 +171,131 @@ describe('ConfigService', function () {
 
         expect(fn () => $this->configService->loadConfig())
             ->toThrow(RuntimeException::class, 'Failed to load configuration: Config rules.subject.min_length must be a non-negative integer');
+    });
+});
+
+describe('ConfigService Security Features', function () {
+    beforeEach(function () {
+        $this->configService = new ConfigService();
+        $this->tempDir = createTempDirectory();
+        $this->originalCwd = getcwd();
+        chdir($this->tempDir);
+    });
+
+    afterEach(function () {
+        chdir($this->originalCwd);
+        cleanupTempPath($this->tempDir);
+        $this->configService->clearCache();
+    });
+
+    it('prevents directory traversal attacks', function () {
+        // Create a directory outside the working directory
+        $outsideDir = createTempDirectory();
+        file_put_contents($outsideDir . '/secret.json', '{"secret": "data"}');
+
+        // Try to create a symlink to outside file
+        symlink($outsideDir . '/secret.json', '.commitlintrc.json');
+
+        expect(fn () => $this->configService->loadConfig())
+            ->toThrow(RuntimeException::class, 'Access denied');
+
+        cleanupTempPath($outsideDir);
+    });
+
+    it('rejects files that are too large', function () {
+        // Create a large config file (over 100KB)
+        $largeContent = json_encode([
+            'large_data' => str_repeat('x', 100001),
+        ]);
+        file_put_contents('.commitlintrc.json', $largeContent);
+
+        expect(fn () => $this->configService->loadConfig())
+            ->toThrow(RuntimeException::class, 'Configuration file too large');
+    });
+
+    it('validates JSON must be an object', function () {
+        file_put_contents('.commitlintrc.json', '["not", "an", "object"]');
+
+        expect(fn () => $this->configService->loadConfig())
+            ->toThrow(RuntimeException::class, 'Configuration must be a JSON object');
+    });
+
+    it('handles file read failures gracefully', function () {
+        // Create a file and then make it unreadable
+        file_put_contents('.commitlintrc.json', '{"test": true}');
+        chmod('.commitlintrc.json', 0o000);
+
+        expect(fn () => $this->configService->loadConfig())
+            ->toThrow(RuntimeException::class, 'Failed to read file');
+
+        chmod('.commitlintrc.json', 0o644); // Restore permissions
+    });
+});
+
+describe('ConfigService Caching', function () {
+    beforeEach(function () {
+        $this->configService = new ConfigService();
+        $this->tempDir = createTempDirectory();
+        $this->originalCwd = getcwd();
+        chdir($this->tempDir);
+    });
+
+    afterEach(function () {
+        chdir($this->originalCwd);
+        cleanupTempPath($this->tempDir);
+        $this->configService->clearCache();
+    });
+
+    it('caches configuration after first load', function () {
+        $config = ['auto_install' => true];
+        file_put_contents('.commitlintrc.json', json_encode($config));
+
+        // First load
+        $config1 = $this->configService->loadConfig();
+        assert(is_array($config1));
+
+        // Modify file
+        file_put_contents('.commitlintrc.json', json_encode(['auto_install' => false]));
+
+        // Second load should return cached version
+        $config2 = $this->configService->loadConfig();
+        assert(is_array($config2));
+
+        expect($config1['auto_install'])->toBe($config2['auto_install']);
+        expect($config2['auto_install'])->toBeTrue(); // Still cached version
+    });
+
+    it('clears cache correctly', function () {
+        $config = ['auto_install' => true];
+        file_put_contents('.commitlintrc.json', json_encode($config));
+
+        // First load
+        $config1 = $this->configService->loadConfig();
+        assert(is_array($config1));
+        expect($config1['auto_install'])->toBeTrue();
+
+        // Clear cache
+        $this->configService->clearCache();
+
+        // Modify file
+        file_put_contents('.commitlintrc.json', json_encode(['auto_install' => false]));
+
+        // Should reload from file
+        $config2 = $this->configService->loadConfig();
+        assert(is_array($config2));
+        expect($config2['auto_install'])->toBeFalse();
+    });
+
+    it('returns same cached instance across multiple calls', function () {
+        $config = ['auto_install' => true];
+        file_put_contents('.commitlintrc.json', json_encode($config));
+
+        $config1 = $this->configService->loadConfig();
+        $config2 = $this->configService->loadConfig();
+        $config3 = $this->configService->loadConfig();
+
+        // All should be the same cached instance
+        expect($config1)->toBe($config2);
+        expect($config2)->toBe($config3);
     });
 });

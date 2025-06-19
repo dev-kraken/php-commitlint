@@ -9,49 +9,125 @@ class ConfigService
     private const CONFIG_FILE = '.commitlintrc.json';
     private const COMPOSER_CONFIG_KEY = 'php-commitlint';
 
+    private static ?array $configCache = null;
+
     public function loadConfig(): array
+    {
+        // Return cached config if available
+        if (self::$configCache !== null) {
+            return self::$configCache;
+        }
+
+        $config = $this->loadConfigFromSources();
+
+        // Cache the validated config
+        self::$configCache = $config;
+
+        return $config;
+    }
+
+    public function clearCache(): void
+    {
+        self::$configCache = null;
+    }
+
+    private function loadConfigFromSources(): array
     {
         // Try to load from .commitlintrc.json first
         if ($this->configExists()) {
             try {
-                $content = file_get_contents($this->getConfigPath());
-                if ($content === false) {
-                    throw new \RuntimeException('Failed to read config file: ' . $this->getConfigPath());
-                }
-
-                $config = json_decode($content, true);
-                if (json_last_error() !== JSON_ERROR_NONE) {
-                    throw new \RuntimeException('Invalid JSON in config file: ' . json_last_error_msg());
-                }
+                $content = $this->readFileSecurely($this->getConfigPath());
+                $config = $this->parseJson($content, $this->getConfigPath());
 
                 return $this->mergeConfig($this->getDefaultConfig(), $this->validateConfig($config));
             } catch (\Throwable $e) {
-                throw new \RuntimeException('Failed to load configuration: ' . $e->getMessage());
+                throw new \RuntimeException('Failed to load configuration: ' . $e->getMessage(), 0, $e);
             }
         }
 
         // Fallback to composer.json config
         if (file_exists('composer.json')) {
             try {
-                $content = file_get_contents('composer.json');
-                if ($content === false) {
-                    throw new \RuntimeException('Failed to read composer.json');
-                }
-
+                $content = $this->readFileSecurely('composer.json');
                 $composer = json_decode($content, true);
-                if (json_last_error() !== JSON_ERROR_NONE) {
-                    throw new \RuntimeException('Invalid JSON in composer.json: ' . json_last_error_msg());
+                if (!is_array($composer)) {
+                    throw new \RuntimeException('Invalid composer.json format');
                 }
 
-                if (isset($composer['extra'][self::COMPOSER_CONFIG_KEY])) {
-                    return $this->mergeConfig($this->getDefaultConfig(), $this->validateConfig($composer['extra'][self::COMPOSER_CONFIG_KEY]));
+                // Ensure 'extra' and 'php-commitlint' keys exist
+                if (!isset($composer['extra'])) {
+                    $composer['extra'] = [];
                 }
+                if (!isset($composer['extra'][self::COMPOSER_CONFIG_KEY])) {
+                    $composer['extra'][self::COMPOSER_CONFIG_KEY] = [];
+                }
+
+                return $this->mergeConfig($this->getDefaultConfig(), $this->validateConfig($composer['extra'][self::COMPOSER_CONFIG_KEY]));
             } catch (\Throwable $e) {
-                throw new \RuntimeException('Failed to load configuration from composer.json: ' . $e->getMessage());
+                throw new \RuntimeException('Failed to load configuration from composer.json: ' . $e->getMessage(), 0, $e);
             }
         }
 
         return $this->getDefaultConfig();
+    }
+
+    private function readFileSecurely(string $filePath): string
+    {
+        // Validate file path to prevent directory traversal
+        $realPath = realpath($filePath);
+        if ($realPath === false) {
+            throw new \RuntimeException("File not found: {$filePath}");
+        }
+
+        $workingDir = getcwd();
+        if ($workingDir === false || !str_starts_with($realPath, $workingDir)) {
+            throw new \RuntimeException("Access denied");
+        }
+
+        // Check if file is readable before attempting to read it
+        if (!is_readable($realPath)) {
+            throw new \RuntimeException("Failed to read file: {$filePath}");
+        }
+
+        $content = file_get_contents($realPath);
+        if ($content === false) {
+            throw new \RuntimeException("Failed to read file: {$filePath}");
+        }
+
+        // Check file size (prevent DoS)
+        if (strlen($content) > 100000) { // 100KB limit
+            throw new \RuntimeException("Configuration file too large: {$filePath}");
+        }
+
+        return $content;
+    }
+
+    private function parseJson(string $content, string $filePath): array
+    {
+        $decoded = json_decode($content, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            $relativePath = $this->getRelativePath($filePath);
+
+            throw new \RuntimeException("Invalid JSON in {$relativePath}: " . json_last_error_msg());
+        }
+
+        if (!is_array($decoded) || $this->isSequentialArray($decoded)) {
+            $relativePath = $this->getRelativePath($filePath);
+
+            throw new \RuntimeException("Configuration must be a JSON object in {$relativePath}");
+        }
+
+        return $decoded;
+    }
+
+    private function getRelativePath(string $filePath): string
+    {
+        $workingDir = getcwd();
+        if ($workingDir !== false && str_starts_with($filePath, $workingDir)) {
+            return ltrim(substr($filePath, strlen($workingDir)), '/');
+        }
+
+        return basename($filePath);
     }
 
     public function configExists(): bool
@@ -147,6 +223,18 @@ class ConfigService
             throw new \RuntimeException('Failed to read composer.json');
         }
         $composer = json_decode($content, true);
+        if (!is_array($composer)) {
+            throw new \RuntimeException('Invalid composer.json format');
+        }
+
+        // Ensure 'extra' and 'php-commitlint' keys exist
+        if (!isset($composer['extra'])) {
+            $composer['extra'] = [];
+        }
+        if (!isset($composer['extra'][self::COMPOSER_CONFIG_KEY])) {
+            $composer['extra'][self::COMPOSER_CONFIG_KEY] = [];
+        }
+
         $composer['extra'][self::COMPOSER_CONFIG_KEY] = $config;
 
         $json = json_encode($composer, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);

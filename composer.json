@@ -47,9 +47,14 @@
   "scripts": {
     "post-install-cmd": "DevKraken\\PhpCommitlint\\Installer::postInstall",
     "post-update-cmd": "DevKraken\\PhpCommitlint\\Installer::postUpdate",
-    "test": "pest",
-    "phpstan": "phpstan analyse",
-    "cs-fix": "php-cs-fixer fix"
+    "test": "vendor/bin/pest",
+    "analyse": "vendor/bin/phpstan analyse",
+    "cs": "PHP_CS_FIXER_IGNORE_ENV=1 vendor/bin/php-cs-fixer fix",
+    "check": [
+      "@test",
+      "@analyse",
+      "@cs"
+    ]
   },
   "extra": {
     "branch-alias": {

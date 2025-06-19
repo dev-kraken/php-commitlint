@@ -85,3 +85,5 @@ clover.xml
 # Lock files (except composer.lock which is needed)
 package-lock.json
 yarn.lock 
+
+.commitlintrc.json

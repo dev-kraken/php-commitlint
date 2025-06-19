@@ -15,10 +15,10 @@ describe('ValidationService', function () {
 
         $result = $this->validator->validate($message, $config);
 
-        expect($result->isValid())->toBeTrue();
-        expect($result->getType())->toBe('feat');
-        expect($result->getScope())->toBeNull();
-        expect($result->getErrors())->toBeEmpty();
+        expect($result->isValid())->toBeTrue()
+            ->and($result->getType())->toBe('feat')
+            ->and($result->getScope())->toBeNull()
+            ->and($result->getErrors())->toBeEmpty();
     });
 
     it('validates a valid commit message with scope', function () {

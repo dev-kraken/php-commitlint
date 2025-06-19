@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace DevKraken\PhpCommitlint\Commands;
 
 use DevKraken\PhpCommitlint\Services\HookService;
+use Exception;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
@@ -39,6 +40,10 @@ class RemoveCommand extends Command
     {
         $io = new SymfonyStyle($input, $output);
         $hook = $input->getArgument('hook');
+        if (!is_string($hook)) {
+            throw new \InvalidArgumentException('Hook name must be a string.');
+        }
+        $hook = (string) $hook;
 
         $io->title('➖ Removing Custom Git Hook');
 
@@ -54,7 +59,7 @@ class RemoveCommand extends Command
             $io->success(sprintf('✅ Custom hook "%s" removed successfully!', $hook));
 
             return Command::SUCCESS;
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             $io->error('❌ Failed to remove hook: ' . $e->getMessage());
 
             return Command::FAILURE;

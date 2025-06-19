@@ -6,11 +6,24 @@ namespace DevKraken\PhpCommitlint\Services;
 
 use DevKraken\PhpCommitlint\Models\CommitMessage;
 use DevKraken\PhpCommitlint\Models\ValidationResult;
+use Throwable;
 
 class ValidationService
 {
     public function validate(string $message, array $config): ValidationResult
     {
+        // Sanitize input
+        $message = $this->sanitizeMessage($message);
+
+        if (empty($message)) {
+            return new ValidationResult(false, ['Commit message cannot be empty'], null, null);
+        }
+
+        // Prevent extremely long messages (DoS protection)
+        if (strlen($message) > 10000) {
+            return new ValidationResult(false, ['Commit message too long (max 10,000 characters)'], null, null);
+        }
+
         try {
             $commitMessage = new CommitMessage($message);
             $errors = [];
@@ -54,9 +67,21 @@ class ValidationService
                 $commitMessage->getType(),
                 $commitMessage->getScope()
             );
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             return new ValidationResult(false, ['Validation error: ' . $e->getMessage()], null, null);
         }
+    }
+
+    private function sanitizeMessage(string $message): string
+    {
+        // Remove null bytes and other control characters except newlines and tabs
+        $message = preg_replace('/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/', '', $message);
+
+        // Normalize line endings
+        $message = str_replace(["\r\n", "\r"], "\n", (string) $message);
+
+        // Trim whitespace but preserve internal formatting
+        return trim($message);
     }
 
     private function shouldSkipValidation(CommitMessage $commitMessage): bool
@@ -99,10 +124,8 @@ class ValidationService
         }
 
         // Check conventional commit format if required
-        if ($config['format']['type'] ?? true) {
-            if (!$commitMessage->hasValidFormat()) {
-                $errors[] = 'Commit message must follow conventional commit format: type(scope): description';
-            }
+        if (($config['format']['type'] ?? true) && !$commitMessage->hasValidFormat()) {
+            $errors[] = 'Commit message must follow conventional commit format: type(scope): description';
         }
 
         return $errors;
@@ -122,7 +145,7 @@ class ValidationService
             }
 
             $allowedTypes = $typeConfig['allowed'] ?? [];
-            if (!empty($allowedTypes) && !in_array($type, $allowedTypes)) {
+            if (!empty($allowedTypes) && !in_array($type, $allowedTypes, true)) {
                 $errors[] = sprintf(
                     'Invalid commit type "%s". Allowed types: %s',
                     $type,
@@ -140,17 +163,15 @@ class ValidationService
         $scope = $commitMessage->getScope();
         $scopeConfig = $config['rules']['scope'] ?? [];
 
-        if ($scopeConfig['required'] ?? false) {
-            if (empty($scope)) {
-                $errors[] = 'Commit scope is required';
+        if (($scopeConfig['required'] ?? false) && empty($scope)) {
+            $errors[] = 'Commit scope is required';
 
-                return $errors;
-            }
+            return $errors;
         }
 
         if (!empty($scope)) {
             $allowedScopes = $scopeConfig['allowed'] ?? [];
-            if (!empty($allowedScopes) && !in_array($scope, $allowedScopes)) {
+            if (!empty($allowedScopes) && !in_array($scope, $allowedScopes, true)) {
                 $errors[] = sprintf(
                     'Invalid commit scope "%s". Allowed scopes: %s',
                     $scope,

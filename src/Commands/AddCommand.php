@@ -35,7 +35,7 @@ class AddCommand extends Command
         );
 
         $this->addArgument(
-            'command',
+            'hook-command',
             InputArgument::REQUIRED,
             'Command to execute'
         );
@@ -44,8 +44,10 @@ class AddCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $io = new SymfonyStyle($input, $output);
+        /** @var string $hook */
         $hook = $input->getArgument('hook');
-        $command = $input->getArgument('command');
+        /** @var string $command */
+        $command = $input->getArgument('hook-command');
 
         $io->title('➕ Adding Custom Git Hook');
 
