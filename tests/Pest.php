@@ -156,7 +156,9 @@ function cleanupTempPath(string $path): void
             }
 
             $todo = ($fileinfo->isDir() ? 'rmdir' : 'unlink');
-            $todo($realPath);
+            if (file_exists($realPath)) {
+                $todo($realPath);
+            }
         }
 
         rmdir($path);
