@@ -161,7 +161,10 @@ function cleanupTempPath(string $path): void
             }
         }
 
-        rmdir($path);
+        // Try to remove the directory, suppress warnings if it fails
+        if (is_dir($path)) {
+            @rmdir($path);
+        }
     }
 }
 
