@@ -56,7 +56,7 @@ final class AddCommand extends Command
         );
 
         $this->addArgument(
-            'command',
+            'hook-command',
             InputArgument::REQUIRED,
             'Command to execute in the hook'
         );
@@ -73,7 +73,7 @@ final class AddCommand extends Command
     {
         $io = new SymfonyStyle($input, $output);
         $hookName = $input->getArgument('hook');
-        $command = $input->getArgument('command');
+        $command = $input->getArgument('hook-command');
 
         if (!is_string($hookName)) {
             throw new InvalidArgumentException('Hook name must be a string');
