@@ -77,14 +77,14 @@ composer install || {
 
 # Run code style check
 print_status "Checking code style..."
-composer run cs-fix -- --dry-run --diff || {
+composer run cs:check || {
     print_error "Code style check failed"
     exit 1
 }
 
 # Run static analysis
 print_status "Running static analysis..."
-composer run phpstan || {
+composer run analyse || {
     print_error "Static analysis failed"
     exit 1
 }
