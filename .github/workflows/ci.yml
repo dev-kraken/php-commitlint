@@ -5,79 +5,237 @@ on:
     branches: [main, dev]
   pull_request:
     branches: [main, dev]
+  schedule:
+    # Run tests every Monday at 9 AM UTC to catch dependency issues
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+    # Allow manual triggers for testing
+
+env:
+  PHP_CS_FIXER_IGNORE_ENV: 1
 
 jobs:
-  test:
+  validate:
+    name: Validate Package
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: mbstring, json
+          coverage: none
+          tools: composer:v2
+
+      - name: Validate composer.json and composer.lock
+        run: composer validate --strict
+
+      - name: Check for security vulnerabilities
+        run: composer audit
+
+  test:
+    name: Tests (PHP ${{ matrix.php-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    needs: validate
 
     strategy:
       fail-fast: false
       matrix:
-        php-version: ["8.2", "8.3"]
-
-    name: PHP ${{ matrix.php-version }}
+        os: [ubuntu-latest]
+        php-version: ["8.3", "8.4"]
+        include:
+          # Test on multiple OS for main PHP version
+          - os: windows-latest
+            php-version: "8.3"
+          - os: macos-latest
+            php-version: "8.3"
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php-version }}
           extensions: mbstring, json
-          coverage: none
+          coverage: xdebug
+          tools: composer:v2
 
-      - name: Check PHP version
-        run: |
-          php --version
-          composer --version
-
-      - name: Validate composer.json and composer.lock
-        run: composer validate --strict
+      - name: Get composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
 
       - name: Cache Composer packages
-        id: composer-cache
         uses: actions/cache@v4
         with:
-          path: vendor
-          key: ${{ runner.os }}-php-${{ matrix.php-version }}-${{ hashFiles('**/composer.lock') }}
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-php-${{ matrix.php-version }}-composer-${{ hashFiles('**/composer.lock') }}
           restore-keys: |
+            ${{ runner.os }}-php-${{ matrix.php-version }}-composer-
             ${{ runner.os }}-php-${{ matrix.php-version }}-
+            ${{ runner.os }}-
 
       - name: Install dependencies
-        run: |
-          composer install --prefer-dist --no-progress --no-interaction
-          composer dump-autoload --optimize
+        run: composer install --prefer-dist --no-progress --no-interaction --optimize-autoloader
 
-      - name: Run code style check
-        run: PHP_CS_FIXER_IGNORE_ENV=1 composer run cs-fix -- --dry-run --diff
+      - name: Run PHPStan static analysis
+        run: composer analyse
 
-      - name: Run static analysis
-        run: composer run phpstan
+      - name: Run tests with coverage
+        run: composer test:coverage
+        if: matrix.php-version == '8.3' && matrix.os == 'ubuntu-latest'
 
-      - name: Run tests
-        run: composer run test
+      - name: Run tests without coverage
+        run: composer test
+        if: matrix.php-version != '8.3' || matrix.os != 'ubuntu-latest'
 
-  security:
+  code-style:
+    name: Code Style
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    name: Security Check
+    timeout-minutes: 10
+    needs: validate
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.2"
+          php-version: "8.3"
           extensions: mbstring, json
           coverage: none
+          tools: composer:v2, cs2pr
+
+      - name: Get composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache Composer packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-php-8.3-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-php-8.3-composer-
 
       - name: Install dependencies
-        run: |
-          composer install --prefer-dist --no-progress --no-interaction
-          composer dump-autoload --optimize
+        run: composer install --prefer-dist --no-progress --no-interaction --optimize-autoloader
 
-      - name: Run security check
-        run: composer audit
+      - name: Check code style
+        run: composer cs:check
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [test, code-style]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: mbstring, json
+          coverage: none
+          tools: composer:v2
+
+      - name: Setup Git
+        run: |
+          git config --global user.name "Test User"
+          git config --global user.email "test@example.com"
+          git init test-repo
+          cd test-repo
+          echo "# Test Repository" > README.md
+          git add README.md
+          git commit -m "Initial commit"
+          cd ..
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress --no-interaction --optimize-autoloader
+
+      - name: Test installation
+        run: |
+          cd test-repo
+          ../bin/php-commitlint install --force
+          ls -la .git/hooks/
+          test -f .git/hooks/commit-msg
+
+      - name: Test commit validation
+        run: |
+          cd test-repo
+          # Test valid commit
+          ../bin/php-commitlint validate "feat: add new feature"
+          # Test invalid commit (should fail)
+          ! ../bin/php-commitlint validate "invalid commit message"
+
+      - name: Test custom hooks
+        run: |
+          cd test-repo
+          ../bin/php-commitlint add pre-commit "echo 'Pre-commit hook executed'"
+          ../bin/php-commitlint list
+          ../bin/php-commitlint remove pre-commit --force
+
+      - name: Test uninstallation
+        run: |
+          cd test-repo
+          ../bin/php-commitlint uninstall --force
+          ! test -f .git/hooks/commit-msg
+
+  dependency-check:
+    name: Dependency Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: mbstring, json
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress --no-interaction
+
+      - name: Check for unused dependencies
+        run: composer why-not --dev
+
+      - name: Check platform requirements
+        run: composer check-platform-reqs
+
+  build-info:
+    name: Build Information
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [validate, test, code-style, integration]
+
+    steps:
+      - name: Build Summary
+        run: |
+          echo "## 🚀 Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Validation | ${{ needs.validate.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tests | ${{ needs.test.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Code Style | ${{ needs.code-style.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Integration | ${{ needs.integration.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Repository:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY

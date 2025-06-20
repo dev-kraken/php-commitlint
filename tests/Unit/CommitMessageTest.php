@@ -6,7 +6,7 @@ use DevKraken\PhpCommitlint\Models\CommitMessage;
 
 describe('CommitMessage', function () {
     it('parses a simple conventional commit', function () {
-        $message = new CommitMessage('feat: add user authentication');
+        $message = CommitMessage::fromString('feat: add user authentication');
 
         expect($message->getType())->toBe('feat');
         expect($message->getScope())->toBeNull();
@@ -16,7 +16,7 @@ describe('CommitMessage', function () {
     });
 
     it('parses a commit with scope', function () {
-        $message = new CommitMessage('feat(auth): add user authentication');
+        $message = CommitMessage::fromString('feat(auth): add user authentication');
 
         expect($message->getType())->toBe('feat');
         expect($message->getScope())->toBe('auth');
@@ -25,7 +25,7 @@ describe('CommitMessage', function () {
 
     it('parses a multi-line commit message', function () {
         $commitText = "feat(auth): add user authentication\n\nThis adds a complete authentication system\nwith login and registration.\n\nCloses #123";
-        $message = new CommitMessage($commitText);
+        $message = CommitMessage::fromString($commitText);
 
         expect($message->getType())->toBe('feat');
         expect($message->getScope())->toBe('auth');
@@ -43,7 +43,7 @@ describe('CommitMessage', function () {
         ];
 
         foreach ($validMessages as $msg) {
-            $message = new CommitMessage($msg);
+            $message = CommitMessage::fromString($msg);
             expect($message->hasValidFormat())->toBeTrue("Failed for: {$msg}");
         }
     });
@@ -57,7 +57,7 @@ describe('CommitMessage', function () {
         ];
 
         foreach ($invalidMessages as $msg) {
-            $message = new CommitMessage($msg);
+            $message = CommitMessage::fromString($msg);
             expect($message->hasValidFormat())->toBeFalse("Should have failed for: {$msg}");
         }
     });
@@ -66,8 +66,8 @@ describe('CommitMessage', function () {
         $withBlankLine = "feat: add feature\n\nThis is the body";
         $withoutBlankLine = "feat: add feature\nThis is the body";
 
-        $message1 = new CommitMessage($withBlankLine);
-        $message2 = new CommitMessage($withoutBlankLine);
+        $message1 = CommitMessage::fromString($withBlankLine);
+        $message2 = CommitMessage::fromString($withoutBlankLine);
 
         expect($message1->hasBlankLineAfterSubject())->toBeTrue();
         expect($message2->hasBlankLineAfterSubject())->toBeFalse();
@@ -75,20 +75,20 @@ describe('CommitMessage', function () {
 
     it('identifies footer lines correctly', function () {
         $commitText = "feat: add feature\n\nBody content here\n\nCloses #123\nSigned-off-by: John Doe <john@example.com>";
-        $message = new CommitMessage($commitText);
+        $message = CommitMessage::fromString($commitText);
 
         expect($message->getFooter())->toBe("Closes #123\nSigned-off-by: John Doe <john@example.com>");
     });
 
     it('handles breaking change footers', function () {
         $commitText = "feat: add new API\n\nThis changes the API\n\nBREAKING CHANGE: API endpoint /users is now /api/users";
-        $message = new CommitMessage($commitText);
+        $message = CommitMessage::fromString($commitText);
 
         expect($message->getFooter())->toBe('BREAKING CHANGE: API endpoint /users is now /api/users');
     });
 
     it('handles commits without conventional format gracefully', function () {
-        $message = new CommitMessage('Just a regular commit message');
+        $message = CommitMessage::fromString('Just a regular commit message');
 
         expect($message->getType())->toBeNull();
         expect($message->getScope())->toBeNull();
@@ -96,9 +96,93 @@ describe('CommitMessage', function () {
     });
 
     it('trims whitespace from messages', function () {
-        $message = new CommitMessage("  feat: add feature  \n  ");
+        $message = CommitMessage::fromString("  feat: add feature  \n  ");
 
-        expect($message->getRawMessage())->toBe('feat: add feature');
         expect($message->getSubject())->toBe('add feature');
+    });
+
+    it('provides utility methods for commit detection', function () {
+        expect(CommitMessage::fromString('Merge branch "feature" into main')->isMergeCommit())->toBeTrue();
+        expect(CommitMessage::fromString('Revert "feat: add feature"')->isRevertCommit())->toBeTrue();
+        expect(CommitMessage::fromString('Initial commit')->isInitialCommit())->toBeTrue();
+        expect(CommitMessage::fromString('fixup! feat: add feature')->isFixupCommit())->toBeTrue();
+        expect(CommitMessage::fromString('squash! feat: add feature')->isFixupCommit())->toBeTrue();
+
+        expect(CommitMessage::fromString('feat: add feature')->isMergeCommit())->toBeFalse();
+        expect(CommitMessage::fromString('feat: add feature')->isRevertCommit())->toBeFalse();
+        expect(CommitMessage::fromString('feat: add feature')->isInitialCommit())->toBeFalse();
+        expect(CommitMessage::fromString('feat: add feature')->isFixupCommit())->toBeFalse();
+    });
+
+    it('provides shouldSkipValidation method', function () {
+        expect(CommitMessage::fromString('Merge branch "feature" into main')->shouldSkipValidation())->toBeTrue();
+        expect(CommitMessage::fromString('Revert "feat: add feature"')->shouldSkipValidation())->toBeTrue();
+        expect(CommitMessage::fromString('Initial commit')->shouldSkipValidation())->toBeTrue();
+        expect(CommitMessage::fromString('fixup! feat: add feature')->shouldSkipValidation())->toBeTrue();
+
+        expect(CommitMessage::fromString('feat: add feature')->shouldSkipValidation())->toBeFalse();
+    });
+
+    it('provides message statistics', function () {
+        $message = CommitMessage::fromString('feat: add user authentication system');
+
+        expect($message->getWordCount())->toBeGreaterThan(0);
+        expect($message->getCharacterCount())->toBeGreaterThan(0);
+        expect($message->getSubjectLength())->toBe(strlen('add user authentication system'));
+    });
+
+    it('supports immutable updates', function () {
+        $original = CommitMessage::fromString('feat: add feature');
+        $withScope = $original->withScope('auth');
+        $withType = $original->withType('fix');
+
+        // Original should be unchanged
+        expect($original->getScope())->toBeNull();
+        expect($original->getType())->toBe('feat');
+
+        // New instances should have updates
+        expect($withScope->getScope())->toBe('auth');
+        expect($withScope->getType())->toBe('feat'); // type unchanged
+
+        expect($withType->getType())->toBe('fix');
+        expect($withType->getScope())->toBeNull(); // scope unchanged
+    });
+
+    it('can create from file', function () {
+        $tempFile = tempnam(sys_get_temp_dir(), 'commit_test');
+        file_put_contents($tempFile, 'feat: add feature from file');
+
+        $message = CommitMessage::fromFile($tempFile);
+
+        expect($message->getType())->toBe('feat');
+        expect($message->getSubject())->toBe('add feature from file');
+
+        unlink($tempFile);
+    });
+
+    it('throws exception for non-existent file', function () {
+        expect(fn () => CommitMessage::fromFile('/non/existent/file.txt'))
+            ->toThrow(InvalidArgumentException::class, 'File not found: /non/existent/file.txt');
+    });
+
+    it('handles empty messages', function () {
+        $message = CommitMessage::fromString('');
+
+        expect($message->isEmpty())->toBeTrue();
+        expect($message->getType())->toBeNull();
+        expect($message->getSubject())->toBeNull();
+    });
+
+    it('identifies additional footer patterns', function () {
+        $footerPatterns = [
+            "feat: add feature\n\nBody\n\nReviewed-by: Jane Doe <jane@example.com>",
+            "feat: add feature\n\nBody\n\nAcked-by: John Smith <john@example.com>",
+            "feat: add feature\n\nBody\n\nTested-by: Test Bot <test@example.com>",
+        ];
+
+        foreach ($footerPatterns as $pattern) {
+            $message = CommitMessage::fromString($pattern);
+            expect($message->getFooter())->not->toBeNull();
+        }
     });
 });

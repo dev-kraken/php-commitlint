@@ -4,24 +4,37 @@ declare(strict_types=1);
 
 namespace DevKraken\PhpCommitlint\Models;
 
-class CommitMessage
+final class CommitMessage
 {
-    private string $rawMessage;
-    private ?string $type = null;
-    private ?string $scope = null;
-    private ?string $subject = null;
-    private ?string $body = null;
-    private ?string $footer = null;
-    /**
-     * @var array<int, string>
-     */
-    private array $lines;
+    private const CONVENTIONAL_COMMIT_PATTERN = '/^([a-z]+)(\(([^)]+)\))?:\s*(.+)$/';
 
-    public function __construct(string $message)
-    {
-        $this->rawMessage = trim($message);
+    private array $lines;
+    private ?string $type;
+    private ?string $scope;
+    private ?string $subject;
+    private ?string $body;
+    private ?string $footer;
+
+    public function __construct(
+        private string $rawMessage,
+        ?string $type = null,
+        ?string $scope = null,
+        ?string $subject = null,
+        ?string $body = null,
+        ?string $footer = null
+    ) {
+        $this->rawMessage = $this->sanitizeMessage($rawMessage);
         $this->lines = explode("\n", $this->rawMessage);
-        $this->parse();
+
+        // Parse the message to extract components
+        $parsed = $this->parseMessage();
+
+        // Set properties, using provided values if available, otherwise parsed values
+        $this->type = $type ?? $parsed['type'];
+        $this->scope = $scope ?? $parsed['scope'];
+        $this->subject = $subject ?? $parsed['subject'];
+        $this->body = $body ?? $parsed['body'];
+        $this->footer = $footer ?? $parsed['footer'];
     }
 
     public function getRawMessage(): string
@@ -55,7 +68,7 @@ class CommitMessage
     }
 
     /**
-     * @return array<int, string>
+     * @return list<string>
      */
     public function getLines(): array
     {
@@ -64,78 +77,168 @@ class CommitMessage
 
     public function hasValidFormat(): bool
     {
-        // Check if it matches conventional commit format: type(scope): description
-        // or type: description
-        $pattern = '/^([a-z]+)(\([^)]+\))?: .+/';
-
-        return preg_match($pattern, $this->lines[0] ?? '') === 1;
+        return $this->matchesConventionalCommitFormat();
     }
 
     public function hasBlankLineAfterSubject(): bool
     {
-        return isset($this->lines[1]) && trim($this->lines[1]) === '';
+        return count($this->lines) > 1 && trim($this->lines[1]) === '';
     }
 
     public function hasBlankLineBeforeFooter(): bool
     {
-        if (empty($this->footer)) {
-            return true;
-        }
-
         $footerStartLine = $this->findFooterStartLine();
-        if ($footerStartLine > 1) {
-            return trim($this->lines[$footerStartLine - 1]) === '';
-        }
 
-        return false;
+        return $footerStartLine > 0 &&
+            $footerStartLine < count($this->lines) &&
+            trim($this->lines[$footerStartLine - 1]) === '';
     }
 
-    private function parse(): void
+    public function isEmpty(): bool
     {
+        return trim($this->rawMessage) === '';
+    }
+
+    public function isMergeCommit(): bool
+    {
+        return str_starts_with($this->rawMessage, 'Merge ');
+    }
+
+    public function isRevertCommit(): bool
+    {
+        return str_starts_with($this->rawMessage, 'Revert ');
+    }
+
+    public function isInitialCommit(): bool
+    {
+        return str_starts_with($this->rawMessage, 'Initial commit');
+    }
+
+    public function isFixupCommit(): bool
+    {
+        return str_starts_with($this->rawMessage, 'fixup!') || str_starts_with($this->rawMessage, 'squash!');
+    }
+
+    public function shouldSkipValidation(): bool
+    {
+        return $this->isMergeCommit()
+            || $this->isRevertCommit()
+            || $this->isInitialCommit()
+            || $this->isFixupCommit();
+    }
+
+    public function getWordCount(): int
+    {
+        return str_word_count($this->rawMessage);
+    }
+
+    public function getCharacterCount(): int
+    {
+        return mb_strlen($this->rawMessage);
+    }
+
+    public function getSubjectLength(): int
+    {
+        return $this->subject ? mb_strlen($this->subject) : 0;
+    }
+
+    public function withType(string $type): self
+    {
+        return new self($this->rawMessage, $type, $this->scope, $this->subject, $this->body, $this->footer);
+    }
+
+    public function withScope(?string $scope): self
+    {
+        return new self($this->rawMessage, $this->type, $scope, $this->subject, $this->body, $this->footer);
+    }
+
+    public static function fromString(string $message): self
+    {
+        return new self(trim($message));
+    }
+
+    public static function fromFile(string $filePath): self
+    {
+        if (!file_exists($filePath)) {
+            throw new \InvalidArgumentException("File not found: {$filePath}");
+        }
+
+        $content = file_get_contents($filePath);
+        if ($content === false) {
+            throw new \RuntimeException("Failed to read file: {$filePath}");
+        }
+
+        return new self($content);
+    }
+
+    private function sanitizeMessage(string $message): string
+    {
+        // Remove null bytes and other control characters except newlines and tabs
+        $sanitized = preg_replace('/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/', '', $message);
+
+        // Normalize line endings
+        $sanitized = str_replace(["\r\n", "\r"], "\n", $sanitized ?? '');
+
+        return trim($sanitized);
+    }
+
+    private function matchesConventionalCommitFormat(): bool
+    {
+        return preg_match(self::CONVENTIONAL_COMMIT_PATTERN, $this->lines[0] ?? '') === 1;
+    }
+
+    /**
+     * @return array{type: ?string, scope: ?string, subject: ?string, body: ?string, footer: ?string}
+     */
+    private function parseMessage(): array
+    {
+        $result = [
+            'type' => null,
+            'scope' => null,
+            'subject' => null,
+            'body' => null,
+            'footer' => null,
+        ];
+
         if (empty($this->lines)) {
-            return;
+            return $result;
         }
 
-        $this->parseHeader($this->lines[0]);
-        $this->parseBodyAndFooter();
-    }
-
-    private function parseHeader(string $header): void
-    {
-        // Parse conventional commit format: type(scope): description
-        $pattern = '/^([a-z]+)(\(([^)]+)\))?: (.+)$/';
-
-        if (preg_match($pattern, $header, $matches)) {
-            $this->type = $matches[1];
-            $this->scope = !empty($matches[3]) ? $matches[3] : null;
-            $this->subject = $matches[4];
+        // Parse header
+        $header = $this->lines[0];
+        if (preg_match(self::CONVENTIONAL_COMMIT_PATTERN, $header, $matches)) {
+            $result['type'] = $matches[1];
+            $result['scope'] = !empty($matches[3]) ? $matches[3] : null;
+            $result['subject'] = $matches[4];
         } else {
-            // If it doesn't match conventional format, treat entire header as subject
-            $this->subject = $header;
+            // Only set subject if header is not empty
+            $result['subject'] = !empty(trim($header)) ? $header : null;
         }
+
+        // Parse body and footer
+        if (count($this->lines) > 1) {
+            $bodyAndFooter = $this->parseBodyAndFooter();
+            $result['body'] = $bodyAndFooter['body'];
+            $result['footer'] = $bodyAndFooter['footer'];
+        }
+
+        return $result;
     }
 
-    private function parseBodyAndFooter(): void
+    /**
+     * @return array{body: ?string, footer: ?string}
+     */
+    private function parseBodyAndFooter(): array
     {
-        if (count($this->lines) <= 1) {
-            return;
-        }
-
         $bodyLines = [];
         $footerLines = [];
         $inFooter = false;
-        $startFromLine = 1;
-
-        // Skip blank line after subject if it exists
-        if (isset($this->lines[1]) && trim($this->lines[1]) === '') {
-            $startFromLine = 2;
-        }
+        $startFromLine = $this->hasBlankLineAfterSubject() ? 2 : 1;
 
         for ($i = $startFromLine; $i < count($this->lines); $i++) {
             $line = $this->lines[$i];
 
-            // Check if this line starts a footer (conventional format)
-            if ($this->isFooterLine($line)) {
+            if (!$inFooter && $this->isFooterLine($line)) {
                 $inFooter = true;
             }
 
@@ -146,38 +249,44 @@ class CommitMessage
             }
         }
 
-        // Remove trailing empty lines from body
+        return [
+            'body' => $this->processBodyLines($bodyLines),
+            'footer' => $this->processFooterLines($footerLines),
+        ];
+    }
+
+    /**
+     * @param list<string> $bodyLines
+     */
+    private function processBodyLines(array $bodyLines): ?string
+    {
+        // Remove trailing empty lines
         while (!empty($bodyLines) && trim(end($bodyLines)) === '') {
             array_pop($bodyLines);
         }
 
-        // If we have footer lines, check if there's a blank line before footer
-        if (!empty($footerLines) && !empty($bodyLines)) {
-            // Remove the blank line that separates body from footer
-            if (trim(end($bodyLines)) === '') {
-                array_pop($bodyLines);
-            }
-        }
+        return !empty($bodyLines) ? implode("\n", $bodyLines) : null;
+    }
 
-        $this->body = !empty($bodyLines) ? implode("\n", $bodyLines) : null;
-        $this->footer = !empty($footerLines) ? implode("\n", $footerLines) : null;
+    /**
+     * @param list<string> $footerLines
+     */
+    private function processFooterLines(array $footerLines): ?string
+    {
+        return !empty($footerLines) ? implode("\n", $footerLines) : null;
     }
 
     private function isFooterLine(string $line): bool
     {
-        // Footer lines typically start with:
-        // - BREAKING CHANGE:
-        // - Closes #123
-        // - Fixes #123
-        // - Refs #123
-        // - Co-authored-by:
-        // - Signed-off-by:
         $footerPatterns = [
             '/^BREAKING CHANGE:/',
             '/^(Closes?|Fixes?|Resolves?)\s+#\d+/i',
             '/^Refs?\s+#\d+/i',
             '/^Co-authored-by:/i',
             '/^Signed-off-by:/i',
+            '/^Reviewed-by:/i',
+            '/^Acked-by:/i',
+            '/^Tested-by:/i',
         ];
 
         foreach ($footerPatterns as $pattern) {

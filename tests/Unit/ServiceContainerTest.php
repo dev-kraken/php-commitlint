@@ -5,6 +5,7 @@ declare(strict_types=1);
 use DevKraken\PhpCommitlint\ServiceContainer;
 use DevKraken\PhpCommitlint\Services\ConfigService;
 use DevKraken\PhpCommitlint\Services\HookService;
+use DevKraken\PhpCommitlint\Services\LoggerService;
 use DevKraken\PhpCommitlint\Services\ValidationService;
 
 beforeEach(function () {
@@ -44,6 +45,13 @@ describe('ServiceContainer', function () {
         expect($validationService)->toBeInstanceOf(ValidationService::class);
     });
 
+    it('creates LoggerService instance', function () {
+        $container = ServiceContainer::getInstance();
+        $loggerService = $container->getLoggerService();
+
+        expect($loggerService)->toBeInstanceOf(LoggerService::class);
+    });
+
     it('returns same instance on subsequent calls', function () {
         $container = ServiceContainer::getInstance();
 
@@ -60,6 +68,20 @@ describe('ServiceContainer', function () {
         $container->setService(ConfigService::class, $mockConfigService);
 
         expect($container->getConfigService())->toBe($mockConfigService);
+    });
+
+    it('can use generic get method', function () {
+        $container = ServiceContainer::getInstance();
+
+        $configService = $container->get(ConfigService::class);
+        $hookService = $container->get(HookService::class);
+        $validationService = $container->get(ValidationService::class);
+        $loggerService = $container->get(LoggerService::class);
+
+        expect($configService)->toBeInstanceOf(ConfigService::class);
+        expect($hookService)->toBeInstanceOf(HookService::class);
+        expect($validationService)->toBeInstanceOf(ValidationService::class);
+        expect($loggerService)->toBeInstanceOf(LoggerService::class);
     });
 
     it('clears all services correctly', function () {
@@ -80,20 +102,59 @@ describe('ServiceContainer', function () {
         expect($hookService1)->not->toBe($hookService2);
     });
 
+    it('can reset container completely', function () {
+        $container = ServiceContainer::getInstance();
+
+        // Create some services
+        $configService1 = $container->getConfigService();
+
+        // Reset container
+        $container->reset();
+
+        // Should create new instances
+        $configService2 = $container->getConfigService();
+
+        expect($configService1)->not->toBe($configService2);
+    });
+
+    it('allows setting custom factories', function () {
+        $container = ServiceContainer::getInstance();
+        $mockConfigService = $this->createMock(ConfigService::class);
+
+        $container->setFactory(ConfigService::class, fn () => $mockConfigService);
+
+        expect($container->getConfigService())->toBe($mockConfigService);
+    });
+
     it('handles multiple service types correctly', function () {
         $container = ServiceContainer::getInstance();
 
         $configService = $container->getConfigService();
         $hookService = $container->getHookService();
         $validationService = $container->getValidationService();
+        $loggerService = $container->getLoggerService();
 
         expect($configService)->toBeInstanceOf(ConfigService::class);
         expect($hookService)->toBeInstanceOf(HookService::class);
         expect($validationService)->toBeInstanceOf(ValidationService::class);
+        expect($loggerService)->toBeInstanceOf(LoggerService::class);
 
         // Ensure they are different instances
         expect($configService)->not->toBe($hookService);
         expect($configService)->not->toBe($validationService);
         expect($hookService)->not->toBe($validationService);
+        expect($loggerService)->not->toBe($configService);
+    });
+
+    it('throws exception for unknown service', function () {
+        $container = ServiceContainer::getInstance();
+
+        // Create a dummy class to test unknown service
+        class UnknownService
+        {
+        }
+
+        expect(fn () => $container->get(UnknownService::class))
+            ->toThrow(InvalidArgumentException::class, 'Unknown service: ' . UnknownService::class);
     });
 });

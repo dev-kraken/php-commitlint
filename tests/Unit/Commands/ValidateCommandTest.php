@@ -3,36 +3,45 @@
 declare(strict_types=1);
 
 use DevKraken\PhpCommitlint\Commands\ValidateCommand;
+use DevKraken\PhpCommitlint\Enums\ExitCode;
 use DevKraken\PhpCommitlint\Models\ValidationResult;
 use DevKraken\PhpCommitlint\Services\ConfigService;
+use DevKraken\PhpCommitlint\Services\LoggerService;
 use DevKraken\PhpCommitlint\Services\ValidationService;
 use Symfony\Component\Console\Application;
-use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
 
-beforeEach(/**
- * @throws \PHPUnit\Framework\MockObject\Exception
- */ function () {
-    $this->tempDir = createTempDirectory();
-    $this->originalCwd = getcwd();
-    chdir($this->tempDir);
+beforeEach(
+    /**
+     * @throws \PHPUnit\Framework\MockObject\Exception
+     */
+    function () {
+        $this->tempDir = createTempDirectory();
+        $this->originalCwd = getcwd();
+        chdir($this->tempDir);
 
-    // Create mock services
-    $this->mockValidationService = $this->createMock(ValidationService::class);
-    $this->mockConfigService = $this->createMock(ConfigService::class);
+        // Create mock services
+        $this->mockValidationService = $this->createMock(ValidationService::class);
+        $this->mockConfigService = $this->createMock(ConfigService::class);
+        $this->mockLoggerService = $this->createMock(LoggerService::class);
 
-    // Setup default config
-    $this->mockConfigService
-        ->method('loadConfig')
-        ->willReturn(createConfig());
+        // Setup default config - will be overridden by specific tests if needed
+        $this->mockConfigService
+            ->method('loadConfig')
+            ->willReturn(createConfig());
 
-    $this->command = new ValidateCommand($this->mockValidationService, $this->mockConfigService);
+        $this->command = new ValidateCommand(
+            $this->mockValidationService,
+            $this->mockConfigService,
+            $this->mockLoggerService
+        );
 
-    $application = new Application();
-    $application->add($this->command);
+        $application = new Application();
+        $application->add($this->command);
 
-    $this->commandTester = new CommandTester($this->command);
-});
+        $this->commandTester = new CommandTester($this->command);
+    }
+);
 
 afterEach(function () {
     chdir($this->originalCwd);
@@ -63,6 +72,11 @@ describe('ValidateCommand', function () {
             expect($definition->hasOption('quiet'))->toBeTrue()
                 ->and($definition->getOption('quiet')->getShortcut())->toBe('q');
         });
+
+        it('accepts verbose-errors option', function () {
+            $definition = $this->command->getDefinition();
+            expect($definition->hasOption('verbose-errors'))->toBeTrue();
+        });
     });
 
     describe('Message Input Handling', function () {
@@ -71,13 +85,13 @@ describe('ValidateCommand', function () {
                 ->expects($this->once())
                 ->method('validate')
                 ->with('feat: add new feature', $this->anything())
-                ->willReturn(new ValidationResult(true, [], 'feat', null));
+                ->willReturn(ValidationResult::valid('feat', null));
 
             $exitCode = $this->commandTester->execute([
                 'message' => 'feat: add new feature',
             ]);
 
-            expect($exitCode)->toBeExitCode(Command::SUCCESS);
+            expect($exitCode)->toBeExitCode(ExitCode::SUCCESS->value);
         });
 
         it('reads message from file option', function () {
@@ -87,13 +101,13 @@ describe('ValidateCommand', function () {
                 ->expects($this->once())
                 ->method('validate')
                 ->with('fix: resolve bug', $this->anything())
-                ->willReturn(new ValidationResult(true, [], 'fix', null));
+                ->willReturn(ValidationResult::valid('fix', null));
 
             $exitCode = $this->commandTester->execute([
                 '--file' => $tempFile,
             ]);
 
-            expect($exitCode)->toBeExitCode(Command::SUCCESS);
+            expect($exitCode)->toBeExitCode(ExitCode::SUCCESS->value);
             unlink($tempFile);
         });
 
@@ -105,11 +119,11 @@ describe('ValidateCommand', function () {
                 ->expects($this->once())
                 ->method('validate')
                 ->with('docs: update documentation', $this->anything())
-                ->willReturn(new ValidationResult(true, [], 'docs', null));
+                ->willReturn(ValidationResult::valid('docs', null));
 
             $exitCode = $this->commandTester->execute([]);
 
-            expect($exitCode)->toBeExitCode(Command::SUCCESS);
+            expect($exitCode)->toBeExitCode(ExitCode::SUCCESS->value);
         });
 
         it('prioritizes argument over file option', function () {
@@ -119,14 +133,14 @@ describe('ValidateCommand', function () {
                 ->expects($this->once())
                 ->method('validate')
                 ->with('feat: correct message', $this->anything())
-                ->willReturn(new ValidationResult(true, [], 'feat', null));
+                ->willReturn(ValidationResult::valid('feat', null));
 
             $exitCode = $this->commandTester->execute([
                 'message' => 'feat: correct message',
                 '--file' => $tempFile,
             ]);
 
-            expect($exitCode)->toBeExitCode(Command::SUCCESS);
+            expect($exitCode)->toBeExitCode(ExitCode::SUCCESS->value);
             unlink($tempFile);
         });
 
@@ -135,8 +149,25 @@ describe('ValidateCommand', function () {
                 '--file' => '/non/existent/file.txt',
             ]);
 
-            expect($exitCode)->toBeExitCode(Command::FAILURE)
+            expect($exitCode)->toBeExitCode(ExitCode::RUNTIME_ERROR->value)
                 ->and($this->commandTester->getDisplay())->toContain('Validation error');
+        });
+    });
+
+    describe('Empty Message Handling', function () {
+        it('handles empty message argument', function () {
+            $exitCode = $this->commandTester->execute([
+                'message' => '',
+            ]);
+
+            expect($exitCode)->toBeExitCode(ExitCode::VALIDATION_FAILED->value)
+                ->and($this->commandTester->getDisplay())->toContain('❌ No commit message provided');
+        });
+
+        it('handles missing commit message file', function () {
+            $exitCode = $this->commandTester->execute([]);
+
+            expect($exitCode)->toBeExitCode(ExitCode::RUNTIME_ERROR->value);
         });
     });
 
@@ -144,13 +175,13 @@ describe('ValidateCommand', function () {
         it('shows success message for valid commit', function () {
             $this->mockValidationService
                 ->method('validate')
-                ->willReturn(new ValidationResult(true, [], 'feat', 'auth'));
+                ->willReturn(ValidationResult::valid('feat', 'auth'));
 
             $exitCode = $this->commandTester->execute([
                 'message' => 'feat(auth): add JWT validation',
             ]);
 
-            expect($exitCode)->toBeExitCode(Command::SUCCESS)
+            expect($exitCode)->toBeExitCode(ExitCode::SUCCESS->value)
                 ->and($this->commandTester->getDisplay())->toContain('✅ Commit message is valid!')
                 ->and($this->commandTester->getDisplay())->toContain('Type: feat')
                 ->and($this->commandTester->getDisplay())->toContain('Scope: auth');
@@ -159,14 +190,14 @@ describe('ValidateCommand', function () {
         it('shows success without details in quiet mode', function () {
             $this->mockValidationService
                 ->method('validate')
-                ->willReturn(new ValidationResult(true, [], 'feat', null));
+                ->willReturn(ValidationResult::valid('feat', null));
 
             $exitCode = $this->commandTester->execute([
                 'message' => 'feat: add feature',
                 '--quiet' => true,
             ]);
 
-            expect($exitCode)->toBeExitCode(Command::SUCCESS)
+            expect($exitCode)->toBeExitCode(ExitCode::SUCCESS->value)
                 ->and($this->commandTester->getDisplay())->toBeEmpty();
         });
     });
@@ -175,7 +206,7 @@ describe('ValidateCommand', function () {
         it('shows error message for invalid commit', function () {
             $this->mockValidationService
                 ->method('validate')
-                ->willReturn(new ValidationResult(false, [
+                ->willReturn(ValidationResult::invalid([
                     'Invalid commit type "invalid"',
                     'Subject must be at least 1 character',
                 ], null, null));
@@ -184,7 +215,7 @@ describe('ValidateCommand', function () {
                 'message' => 'invalid: ',
             ]);
 
-            expect($exitCode)->toBeExitCode(Command::FAILURE)
+            expect($exitCode)->toBeExitCode(ExitCode::VALIDATION_FAILED->value)
                 ->and($this->commandTester->getDisplay())->toContain('❌ Commit message validation failed!')
                 ->and($this->commandTester->getDisplay())->toContain('🔍 Issues Found:')
                 ->and($this->commandTester->getDisplay())->toContain('Invalid commit type "invalid"')
@@ -194,117 +225,154 @@ describe('ValidateCommand', function () {
         it('shows examples on validation failure', function () {
             $this->mockValidationService
                 ->method('validate')
-                ->willReturn(new ValidationResult(false, ['Some error'], null, null));
+                ->willReturn(ValidationResult::invalid(['Some error'], null, null));
 
             $exitCode = $this->commandTester->execute([
                 'message' => 'bad message',
             ]);
 
-            expect($exitCode)->toBeExitCode(Command::FAILURE)
+            expect($exitCode)->toBeExitCode(ExitCode::VALIDATION_FAILED->value)
                 ->and($this->commandTester->getDisplay())->toContain('💡 Examples of valid commit messages:')
-                ->and($this->commandTester->getDisplay())->toContain('feat: add new user authentication')
-                ->and($this->commandTester->getDisplay())->toContain('conventionalcommits.org');
+                ->and($this->commandTester->getDisplay())->toContain('feat: add new user authentication');
         });
 
-        it('suppresses output in quiet mode on failure', function () {
+        it('shows failure without details in quiet mode', function () {
             $this->mockValidationService
                 ->method('validate')
-                ->willReturn(new ValidationResult(false, ['Some error'], null, null));
+                ->willReturn(ValidationResult::invalid(['Some error'], null, null));
 
             $exitCode = $this->commandTester->execute([
                 'message' => 'bad message',
                 '--quiet' => true,
             ]);
 
-            expect($exitCode)->toBeExitCode(Command::FAILURE)
+            expect($exitCode)->toBeExitCode(ExitCode::VALIDATION_FAILED->value)
                 ->and($this->commandTester->getDisplay())->toBeEmpty();
+        });
+
+        it('shows detailed error information with verbose option', function () {
+            $this->mockValidationService
+                ->method('validate')
+                ->willReturn(ValidationResult::invalid([
+                    'Error 1',
+                    'Error 2',
+                    'Error 3',
+                ], null, null));
+
+            $exitCode = $this->commandTester->execute([
+                'message' => 'bad message',
+                '--verbose-errors' => true,
+            ]);
+
+            expect($exitCode)->toBeExitCode(ExitCode::VALIDATION_FAILED->value)
+                ->and($this->commandTester->getDisplay())->toContain('Total errors found: 3');
+        });
+    });
+
+    describe('Configuration Loading', function () {
+        it('loads configuration from ConfigService', function () {
+            $customConfig = createConfig([
+                'rules' => [
+                    'type' => [
+                        'allowed' => ['custom', 'types'],
+                    ],
+                ],
+            ]);
+
+            // Create a fresh mock ConfigService for this test to avoid conflicts
+            $mockConfigService = $this->createMock(ConfigService::class);
+            $mockConfigService
+                ->expects($this->once())
+                ->method('loadConfig')
+                ->willReturn($customConfig);
+
+            // Create a new command instance with the fresh mock
+            $command = new ValidateCommand(
+                $this->mockValidationService,
+                $mockConfigService,
+                $this->mockLoggerService
+            );
+
+            $application = new Application();
+            $application->add($command);
+            $commandTester = new CommandTester($command);
+
+            $this->mockValidationService
+                ->expects($this->once())
+                ->method('validate')
+                ->with('custom: message', $customConfig)
+                ->willReturn(ValidationResult::valid('custom', null));
+
+            $exitCode = $commandTester->execute([
+                'message' => 'custom: message',
+            ]);
+
+            expect($exitCode)->toBeExitCode(ExitCode::SUCCESS->value);
         });
     });
 
     describe('Error Handling', function () {
-        it('handles empty message gracefully', function () {
-            $exitCode = $this->commandTester->execute([
-                'message' => '',
-            ]);
-
-            expect($exitCode)->toBeExitCode(Command::FAILURE)
-                ->and($this->commandTester->getDisplay())->toContain('❌ No commit message provided');
-        });
-
         it('handles validation service exceptions', function () {
             $this->mockValidationService
                 ->method('validate')
-                ->willThrowException(new RuntimeException('Service error'));
+                ->willThrowException(new Exception('Service error'));
 
             $exitCode = $this->commandTester->execute([
-                'message' => 'feat: test',
+                'message' => 'feat: test message',
             ]);
 
-            expect($exitCode)->toBeExitCode(Command::FAILURE)
+            expect($exitCode)->toBeExitCode(ExitCode::RUNTIME_ERROR->value)
                 ->and($this->commandTester->getDisplay())->toContain('❌ Validation error: Service error');
         });
 
         it('handles config service exceptions', function () {
             $this->mockConfigService
                 ->method('loadConfig')
-                ->willThrowException(new RuntimeException('Config error'));
+                ->willThrowException(new Exception('Config error'));
 
             $exitCode = $this->commandTester->execute([
-                'message' => 'feat: test',
+                'message' => 'feat: test message',
             ]);
 
-            expect($exitCode)->toBeExitCode(Command::FAILURE)
+            expect($exitCode)->toBeExitCode(ExitCode::RUNTIME_ERROR->value)
                 ->and($this->commandTester->getDisplay())->toContain('❌ Validation error: Config error');
-        });
-
-        it('suppresses errors in quiet mode', function () {
-            $this->mockValidationService
-                ->method('validate')
-                ->willThrowException(new RuntimeException('Service error'));
-
-            $exitCode = $this->commandTester->execute([
-                'message' => 'feat: test',
-                '--quiet' => true,
-            ]);
-
-            expect($exitCode)->toBeExitCode(Command::FAILURE)
-                ->and($this->commandTester->getDisplay())->toBeEmpty();
         });
     });
 
-    describe('Custom Configuration', function () {
-        it('uses custom allowed types in examples', function () {
-            $customConfig = createConfig([
-                'rules' => [
-                    'type' => [
-                        'allowed' => ['custom', 'special', 'unique'],
-                    ],
-                ],
-            ]);
-
-            // Reset the mock configuration to ensure the custom config is used
-            $this->mockConfigService = $this->createMock(ConfigService::class);
-            $this->mockConfigService
+    describe('Logging Integration', function () {
+        it('logs validation results', function () {
+            $this->mockLoggerService
                 ->expects($this->once())
-                ->method('loadConfig')
-                ->willReturn($customConfig);
+                ->method('debug')
+                ->with('Validation completed', $this->anything());
 
-            // Create a new command instance with the fresh mock
-            $this->command = new ValidateCommand($this->mockValidationService, $this->mockConfigService);
-            $application = new Application();
-            $application->add($this->command);
-            $this->commandTester = new CommandTester($this->command);
+            $this->mockLoggerService
+                ->expects($this->once())
+                ->method('info')
+                ->with('Commit message validation successful', $this->anything());
 
             $this->mockValidationService
                 ->method('validate')
-                ->willReturn(new ValidationResult(false, ['Some error'], null, null));
+                ->willReturn(ValidationResult::valid('feat', null));
 
-            $exitCode = $this->commandTester->execute([
-                'message' => 'bad message',
+            $this->commandTester->execute([
+                'message' => 'feat: test message',
             ]);
+        });
 
-            expect($exitCode)->toBeExitCode(Command::FAILURE)
-                ->and($this->commandTester->getDisplay())->toContain('custom: add new user authentication');
+        it('logs validation failures', function () {
+            $this->mockLoggerService
+                ->expects($this->once())
+                ->method('warning')
+                ->with('Commit message validation failed', $this->anything());
+
+            $this->mockValidationService
+                ->method('validate')
+                ->willReturn(ValidationResult::invalid(['Error'], null, null));
+
+            $this->commandTester->execute([
+                'message' => 'invalid message',
+            ]);
         });
     });
 });

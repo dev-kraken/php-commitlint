@@ -1,35 +1,54 @@
 {
   "name": "dev-kraken/php-commitlint",
-  "description": "A powerful Git hooks and commit message linting tool for PHP projects - combining the best of husky and commitlint",
+  "description": "A powerful Git hooks and commit message linting tool for PHP projects - combining the best of husky and commitlint in a native PHP implementation",
   "type": "library",
   "keywords": [
     "git",
     "hooks",
     "commit",
     "lint",
-    "husky",
     "commitlint",
+    "husky",
     "php",
-    "validation"
+    "validation",
+    "conventional-commits",
+    "git-hooks",
+    "developer-tools",
+    "code-quality"
   ],
+  "homepage": "https://github.com/dev-kraken/php-commitlint",
   "license": "MIT",
   "authors": [
     {
       "name": "DevKraken",
-      "email": "soman@devkraken.com"
+      "email": "soman@devkraken.com",
+      "homepage": "https://devkraken.com",
+      "role": "Developer"
+    }
+  ],
+  "support": {
+    "issues": "https://github.com/dev-kraken/php-commitlint/issues",
+    "source": "https://github.com/dev-kraken/php-commitlint",
+    "docs": "https://github.com/dev-kraken/php-commitlint#readme",
+    "email": "soman@devkraken.com"
+  },
+  "funding": [
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/dev-kraken"
     }
   ],
   "require": {
-    "php": ">=8.2",
-    "symfony/console": "^6.0|^7.0",
-    "symfony/process": "^6.0|^7.0",
-    "symfony/finder": "^6.0|^7.0"
+    "php": "^8.3",
+    "psr/log": "^3.0",
+    "symfony/console": "^6.4|^7.0",
+    "symfony/process": "^6.4|^7.0"
   },
   "require-dev": {
-    "pestphp/pest": "^2.0",
-    "phpstan/phpstan": "^1.10",
-    "friendsofphp/php-cs-fixer": "^3.0",
-    "composer/composer": "^2.0"
+    "composer/composer": "^2.6",
+    "friendsofphp/php-cs-fixer": "^3.52",
+    "pestphp/pest": "^2.34",
+    "phpstan/phpstan": "^1.10"
   },
   "autoload": {
     "psr-4": {
@@ -47,26 +66,95 @@
   "scripts": {
     "post-install-cmd": "DevKraken\\PhpCommitlint\\Installer::postInstall",
     "post-update-cmd": "DevKraken\\PhpCommitlint\\Installer::postUpdate",
-    "test": "vendor/bin/pest",
-    "analyse": "vendor/bin/phpstan analyse",
-    "cs": "PHP_CS_FIXER_IGNORE_ENV=1 vendor/bin/php-cs-fixer fix",
+    "test": "pest",
+    "test:unit": "pest tests/Unit",
+    "test:integration": "pest tests/Integration",
+    "test:coverage": "pest --coverage",
+    "test:coverage-html": "pest --coverage-html coverage",
+    "analyse": "phpstan analyse",
+    "cs": "PHP_CS_FIXER_IGNORE_ENV=1 php-cs-fixer fix",
+    "cs:check": "PHP_CS_FIXER_IGNORE_ENV=1 php-cs-fixer fix --dry-run --diff",
+    "security": "composer audit",
     "check": [
-      "@test",
+      "composer validate --strict",
+      "@cs:check", 
       "@analyse",
-      "@cs"
+      "@test"
+    ],
+    "fix": [
+      "@cs",
+      "@test"
+    ],
+    "ci": [
+      "@check",
+      "@security"
     ]
+  },
+  "scripts-descriptions": {
+    "test": "Run all tests",
+    "test:unit": "Run unit tests only",
+    "test:integration": "Run integration tests only", 
+    "test:coverage": "Run tests with coverage report",
+    "test:coverage-html": "Run tests with HTML coverage report",
+    "analyse": "Run static analysis with PHPStan",
+    "cs": "Fix code style issues",
+    "cs:check": "Check code style without fixing",
+    "security": "Run security audit",
+
+    "check": "Run all quality checks",
+    "fix": "Fix code style and run tests",
+    "ci": "Run CI pipeline checks"
   },
   "extra": {
     "branch-alias": {
       "dev-main": "1.0-dev"
+    },
+    "php-commitlint": {
+      "auto_install": false,
+      "rules": {
+        "type": {
+          "required": true,
+          "allowed": ["feat", "fix", "docs", "style", "refactor", "perf", "test", "chore", "ci", "build", "revert"]
+        },
+        "scope": {
+          "required": false,
+          "allowed": []
+        },
+        "subject": {
+          "min_length": 1,
+          "max_length": 100,
+          "case": "any",
+          "end_with_period": false
+        },
+        "body": {
+          "max_line_length": 100,
+          "leading_blank": true
+        },
+        "footer": {
+          "leading_blank": true
+        }
+      },
+      "patterns": {
+        "breaking_change": "/^BREAKING CHANGE:/",
+        "issue_reference": "/(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+#\\d+/i"
+      },
+      "hooks": {
+        "commit-msg": true,
+        "pre-commit": false,
+        "pre-push": false
+      }
     }
   },
   "config": {
-    "sort-packages": true,
     "allow-plugins": {
-      "php-http/discovery": true,
       "pestphp/pest-plugin": true
-    }
+    },
+    "optimize-autoloader": true,
+    "platform": {
+      "php": "8.3"
+    },
+    "preferred-install": "dist",
+    "sort-packages": true
   },
   "minimum-stability": "stable",
   "prefer-stable": true
