@@ -291,11 +291,16 @@ class ConfigService
         $result = $default;
 
         foreach ($custom as $key => $value) {
-            if (isset($result[$key]) && is_array($result[$key]) && is_array($value) && !$this->isSequentialArray($value)) {
-                // Only merge associative arrays, not sequential arrays
-                $result[$key] = $this->mergeConfig($result[$key], $value);
+            if (isset($result[$key]) && is_array($result[$key]) && is_array($value)) {
+                // For sequential arrays (like 'allowed'), override completely
+                if ($this->isSequentialArray($value) || $this->isSequentialArray($result[$key])) {
+                    $result[$key] = $value;
+                } else {
+                    // Only merge associative arrays
+                    $result[$key] = $this->mergeConfig($result[$key], $value);
+                }
             } else {
-                // Override completely for non-arrays and sequential arrays
+                // Override completely for non-arrays and other cases
                 $result[$key] = $value;
             }
         }

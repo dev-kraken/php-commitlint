@@ -39,7 +39,7 @@ jobs:
         run: composer audit
 
   test:
-    name: Tests (PHP ${{ matrix.php-version }})
+    name: Tests ${{ matrix.platform }} (PHP ${{ matrix.php-version }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     needs: validate
@@ -49,12 +49,15 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         php-version: ["8.3", "8.4"]
+        platform: ["Linux"]
         include:
           # Test on multiple OS for main PHP version
           - os: windows-latest
             php-version: "8.3"
+            platform: "Windows"
           - os: macos-latest
             php-version: "8.3"
+            platform: "macOS"
 
     steps:
       - name: Checkout

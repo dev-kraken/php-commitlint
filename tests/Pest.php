@@ -135,35 +135,64 @@ function createTempFile(string $content, string $suffix = '.tmp'): string
 function cleanupTempPath(string $path): void
 {
     if (is_file($path)) {
-        unlink($path);
-    } elseif (is_dir($path)) {
-        $files = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($path, FilesystemIterator::SKIP_DOTS),
-            RecursiveIteratorIterator::CHILD_FIRST
-        );
+        @unlink($path);
 
-        /** @var SplFileInfo $fileinfo */
-        foreach ($files as $fileinfo) {
-            $realPath = $fileinfo->getRealPath();
-            if ($realPath === false) {
-                // Handle symlinks that might have broken targets
-                $pathName = $fileinfo->getPathname();
-                if (is_link($pathName)) {
-                    unlink($pathName);
+        return;
+    }
+
+    if (!is_dir($path)) {
+        return;
+    }
+
+    // On Windows, try multiple cleanup attempts with delays
+    $maxAttempts = PHP_OS_FAMILY === 'Windows' ? 3 : 1;
+
+    for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+        try {
+            $files = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator($path, FilesystemIterator::SKIP_DOTS),
+                RecursiveIteratorIterator::CHILD_FIRST
+            );
+
+            /** @var SplFileInfo $fileinfo */
+            foreach ($files as $fileinfo) {
+                $realPath = $fileinfo->getRealPath();
+                if ($realPath === false) {
+                    // Handle symlinks that might have broken targets
+                    $pathName = $fileinfo->getPathname();
+                    if (is_link($pathName)) {
+                        @unlink($pathName);
+                    }
+
+                    continue;
                 }
 
-                continue;
+                if ($fileinfo->isDir()) {
+                    @rmdir($realPath);
+                } else {
+                    @unlink($realPath);
+                }
             }
 
-            $todo = ($fileinfo->isDir() ? 'rmdir' : 'unlink');
-            if (file_exists($realPath)) {
-                $todo($realPath);
+            // Try to remove the main directory
+            if (is_dir($path)) {
+                @rmdir($path);
             }
-        }
 
-        // Try to remove the directory, suppress warnings if it fails
-        if (is_dir($path)) {
-            @rmdir($path);
+            // If directory is gone, we're done
+            if (!is_dir($path)) {
+                break;
+            }
+
+            // On Windows, wait a bit before retry
+            if (PHP_OS_FAMILY === 'Windows' && $attempt < $maxAttempts) {
+                usleep(100000); // 100ms
+            }
+        } catch (Exception $e) {
+            // On final attempt or non-Windows, ignore errors
+            if ($attempt === $maxAttempts || PHP_OS_FAMILY !== 'Windows') {
+                break;
+            }
         }
     }
 }

@@ -100,6 +100,8 @@ describe('HookService', function () {
             $this->hookService->installHooks();
 
             $hookContent = file_get_contents($this->tempDir . '/.git/hooks/commit-msg');
+            expect($hookContent)->not->toBeFalse();
+            assert($hookContent !== false);
 
             // Get the actual PHP binary path that the service detects
             $reflection = new ReflectionClass($this->hookService);
@@ -108,9 +110,25 @@ describe('HookService', function () {
             $expectedPhpPath = $method->invoke($this->hookService);
             assert(is_string($expectedPhpPath));
 
-            // Normalize the expected path for cross-platform comparison (HookService normalizes paths)
-            $normalizedPhpPath = str_replace('\\', '/', $expectedPhpPath);
-            expect($hookContent)->toContain($normalizedPhpPath); // Actual PHP binary path (normalized)
+            // The hook should contain some form of the PHP path (may be normalized differently)
+            // On Windows, it might be /c/... or c:/... format
+            $pathVariants = [
+                $expectedPhpPath,
+                str_replace('\\', '/', $expectedPhpPath),
+                // Windows Git Bash format: C: -> /c
+                preg_replace('/^([A-Za-z]):/', '/$1', str_replace('\\', '/', $expectedPhpPath)),
+            ];
+
+            $foundPath = false;
+            foreach ($pathVariants as $variant) {
+                if ($variant !== null && str_contains($hookContent, $variant)) {
+                    $foundPath = true;
+
+                    break;
+                }
+            }
+
+            expect($foundPath)->toBeTrue('Expected hook to contain PHP binary path in some format');
 
             // Now we expect relative paths for better portability
             expect($hookContent)->toContain('./bin/php-commitlint'); // Relative path for development mode

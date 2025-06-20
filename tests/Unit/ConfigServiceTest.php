@@ -275,23 +275,27 @@ describe('ConfigService Caching', function () {
     });
 
     it('caches configuration after first load', function () {
+        // Clear cache first to ensure clean state
+        $this->configService->clearCache();
+
         $config = ['auto_install' => true];
         file_put_contents('.commitlintrc.json', json_encode($config));
 
         // First load
         $config1 = $this->configService->loadConfig();
         assert(is_array($config1));
+        expect($config1['auto_install'])->toBeTrue();
 
-        // Modify file
+        // Modify file on disk
         file_put_contents('.commitlintrc.json', json_encode(['auto_install' => false]));
 
-        // Second load should return cached version
+        // Second load should return cached version (still true)
         $config2 = $this->configService->loadConfig();
         assert(is_array($config2));
 
+        // Both should have the same value (cached version)
         expect($config1['auto_install'])->toBe($config2['auto_install'])
-            ->and($config2['auto_install'])->toBeTrue();
-        // Still cached version
+            ->and($config2['auto_install'])->toBeTrue(); // Should still be cached version
     });
 
     it('clears cache correctly', function () {
