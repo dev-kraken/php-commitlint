@@ -38,6 +38,7 @@ describe('End-to-End Integration Tests', function () {
                 'command' => 'add',
                 'hook' => 'pre-commit',
                 'hook-command' => 'echo "Running tests..."',
+                '--force' => true,
             ]);
 
             $hookContent = file_get_contents('.git/hooks/pre-commit');
@@ -201,6 +202,7 @@ describe('End-to-End Integration Tests', function () {
                 'command' => 'add',
                 'hook' => 'pre-commit',
                 'hook-command' => 'touch custom_test_file.txt',
+                '--force' => true,
             ]);
 
             // Execute the hook
