@@ -43,7 +43,7 @@ vendor/bin/php-commitlint install
 vendor/bin/php-commitlint validate "feat: add new feature"
 
 # List installed hooks
-vendor/bin/php-commitlint list
+vendor/bin/php-commitlint status
 
 # Add custom hook
 vendor/bin/php-commitlint add pre-commit "vendor/bin/pest"

@@ -18,7 +18,7 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 use Throwable;
 
 #[AsCommand(
-    name: 'list',
+    name: 'status',
     description: 'List installed Git hooks and configuration'
 )]
 final class ListCommand extends Command

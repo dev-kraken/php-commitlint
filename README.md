@@ -108,14 +108,14 @@ vendor/bin/php-commitlint add pre-push "vendor/bin/phpstan analyse"
 vendor/bin/php-commitlint remove pre-commit [--force]
 
 # List all hooks and configuration
-vendor/bin/php-commitlint list
+vendor/bin/php-commitlint status
 
 # Show detailed information
-vendor/bin/php-commitlint list --verbose
+vendor/bin/php-commitlint status --verbose
 
 # Show only hooks or config
-vendor/bin/php-commitlint list --hooks-only
-vendor/bin/php-commitlint list --config-only
+vendor/bin/php-commitlint status --hooks-only
+vendor/bin/php-commitlint status --config-only
 ```
 
 ### Uninstall

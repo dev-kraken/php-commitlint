@@ -59,7 +59,7 @@ describe('End-to-End Integration Tests', function () {
             expect($this->applicationTester->getStatusCode())->toBe(1);
 
             // 6. List installed hooks
-            $this->applicationTester->run(['command' => 'list']);
+            $this->applicationTester->run(['command' => 'status']);
             expect($this->applicationTester->getDisplay())->toContain('commit-msg');
             expect($this->applicationTester->getDisplay())->toContain('pre-commit');
 

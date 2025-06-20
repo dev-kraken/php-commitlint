@@ -198,7 +198,7 @@ jobs:
         run: |
           cd test-repo
           ../bin/php-commitlint add pre-commit "echo 'Pre-commit hook executed'" --force
-          ../bin/php-commitlint list
+          ../bin/php-commitlint status
           ../bin/php-commitlint remove pre-commit --force
 
       - name: Test uninstallation

@@ -184,8 +184,8 @@ vendor/bin/php-commitlint remove pre-commit
 **A:** Yes, use the list command:
 
 ```bash
-vendor/bin/php-commitlint list
-vendor/bin/php-commitlint list --verbose  # More details
+vendor/bin/php-commitlint status
+vendor/bin/php-commitlint status --verbose  # More details
 ```
 
 ## Validation Rules
@@ -265,7 +265,7 @@ Use `--verbose-errors` to see specific validation failures.
 
 **A:** Check these:
 1. Are you in a Git repository? (`git status`)
-2. Are hooks installed? (`vendor/bin/php-commitlint list`)
+2. Are hooks installed? (`vendor/bin/php-commitlint status`)
 3. Are hook files executable? (`ls -la .git/hooks/`)
 4. Is the PHP CommitLint binary accessible?
 
