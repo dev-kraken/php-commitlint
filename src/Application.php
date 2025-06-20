@@ -16,7 +16,7 @@ use Symfony\Component\Console\Command\Command;
 final class Application extends SymfonyApplication
 {
     private const string APP_NAME = 'PHP CommitLint';
-    private const string APP_VERSION = '1.0.0';
+    private const string APP_VERSION = '1.1.0';
     private const string DEFAULT_COMMAND = 'validate';
 
     private ServiceContainer $container;
