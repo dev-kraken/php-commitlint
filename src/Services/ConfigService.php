@@ -88,6 +88,14 @@ class ConfigService
         $normalizedRealPath = $this->normalizePath($realPath);
         $normalizedWorkingDir = $this->normalizePath($workingDir);
 
+        // On Windows, also try normalizing the working directory with realpath for consistency
+        if (PHP_OS_FAMILY === 'Windows') {
+            $realWorkingDir = realpath($workingDir);
+            if ($realWorkingDir !== false) {
+                $normalizedWorkingDir = $this->normalizePath($realWorkingDir);
+            }
+        }
+
         if (!str_starts_with($normalizedRealPath, $normalizedWorkingDir)) {
             throw new \RuntimeException("Access denied");
         }
@@ -146,6 +154,15 @@ class ConfigService
         // Convert to lowercase on Windows for case-insensitive comparison
         if (PHP_OS_FAMILY === 'Windows') {
             $normalized = strtolower($normalized);
+
+            // Handle Windows short path names (8.3 format) by expanding them
+            if (str_contains($normalized, '~')) {
+                // Try to get the real path to expand short names
+                $realNormalized = realpath($path);
+                if ($realNormalized !== false) {
+                    $normalized = strtolower(str_replace('\\', '/', $realNormalized));
+                }
+            }
         }
 
         // Remove any trailing slashes for consistent comparison

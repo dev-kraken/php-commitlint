@@ -90,7 +90,7 @@ describe('HookService', function () {
         it('throws exception if hooks directory is not writable', function () {
             chmod($this->tempDir . '/.git/hooks', 0o444); // Read-only
 
-            expect(fn () => $this->hookService->installHooks())
+            expect(fn() => $this->hookService->installHooks())
                 ->toThrow(RuntimeException::class, 'Hooks directory is not writable');
 
             chmod($this->tempDir . '/.git/hooks', 0o755); // Restore permissions
@@ -107,7 +107,9 @@ describe('HookService', function () {
             $method->setAccessible(true);
             $expectedPhpPath = $method->invoke($this->hookService);
 
-            expect($hookContent)->toContain($expectedPhpPath); // Actual PHP binary path
+            // Normalize the expected path for cross-platform comparison (HookService normalizes paths)
+            $normalizedPhpPath = str_replace('\\', '/', $expectedPhpPath);
+            expect($hookContent)->toContain($normalizedPhpPath); // Actual PHP binary path (normalized)
 
             // Normalize paths for cross-platform comparison
             $normalizedTempDir = str_replace('\\', '/', $this->tempDir);
@@ -146,14 +148,14 @@ describe('HookService', function () {
         });
 
         it('validates hook name to prevent path traversal', function () {
-            expect(fn () => $this->hookService->addCustomHook('../../../etc/passwd', 'evil command'))
+            expect(fn() => $this->hookService->addCustomHook('../../../etc/passwd', 'evil command'))
                 ->toThrow(InvalidArgumentException::class, 'Invalid hook name');
         });
 
         it('validates command length', function () {
             $longCommand = str_repeat('a', 1001);
 
-            expect(fn () => $this->hookService->addCustomHook('pre-commit', $longCommand))
+            expect(fn() => $this->hookService->addCustomHook('pre-commit', $longCommand))
                 ->toThrow(InvalidArgumentException::class, 'Command too long');
         });
 
