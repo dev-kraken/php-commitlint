@@ -102,12 +102,12 @@ class ConfigService
 
         // Check if file is readable before attempting to read it
         if (!is_readable($realPath)) {
-            throw new \RuntimeException("Failed to read file: {$filePath}");
+            throw new \RuntimeException("Failed to read file");
         }
 
         $content = file_get_contents($realPath);
         if ($content === false) {
-            throw new \RuntimeException("Failed to read file: {$filePath}");
+            throw new \RuntimeException("Failed to read file");
         }
 
         // Check file size (prevent DoS)
@@ -128,9 +128,7 @@ class ConfigService
         }
 
         if (!is_array($decoded) || $this->isSequentialArray($decoded)) {
-            $relativePath = $this->getRelativePath($filePath);
-
-            throw new \RuntimeException("Configuration must be a JSON object in {$relativePath}");
+            throw new \RuntimeException("Configuration must be a JSON object");
         }
 
         return $decoded;
@@ -321,23 +319,23 @@ class ConfigService
     {
         // Basic validation of configuration structure
         if (isset($config['rules']['type']['allowed']) && !is_array($config['rules']['type']['allowed'])) {
-            throw new \InvalidArgumentException('Config rules.type.allowed must be an array');
+            throw new \RuntimeException('Config rules.type.allowed must be an array');
         }
 
         if (isset($config['rules']['scope']['allowed']) && !is_array($config['rules']['scope']['allowed'])) {
-            throw new \InvalidArgumentException('Config rules.scope.allowed must be an array');
+            throw new \RuntimeException('Config rules.scope.allowed must be an array');
         }
 
         if (isset($config['rules']['subject']['min_length']) && (!is_int($config['rules']['subject']['min_length']) || $config['rules']['subject']['min_length'] < 0)) {
-            throw new \InvalidArgumentException('Config rules.subject.min_length must be a non-negative integer');
+            throw new \RuntimeException('Config rules.subject.min_length must be a non-negative integer');
         }
 
         if (isset($config['rules']['subject']['max_length']) && (!is_int($config['rules']['subject']['max_length']) || $config['rules']['subject']['max_length'] < 1)) {
-            throw new \InvalidArgumentException('Config rules.subject.max_length must be a positive integer');
+            throw new \RuntimeException('Config rules.subject.max_length must be a positive integer');
         }
 
         if (isset($config['rules']['subject']['case']) && !in_array($config['rules']['subject']['case'], ['lower', 'upper', 'any'])) {
-            throw new \InvalidArgumentException('Config rules.subject.case must be one of: lower, upper, any');
+            throw new \RuntimeException('Config rules.subject.case must be one of: lower, upper, any');
         }
 
         return $config;
