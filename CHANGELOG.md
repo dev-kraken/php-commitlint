@@ -10,6 +10,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Future enhancements will be listed here
 
+## [1.0.1] - 2025-01-16
+
+### 🐛 Bug Fixes & CI Improvements
+
+This patch release resolves critical CI/CD issues and improves cross-platform compatibility.
+
+#### Fixed
+- **Windows CI Compatibility** - Fixed path normalization issues on Windows CI runners
+  - Enhanced `ConfigService::normalizePath()` to handle Windows short path names (8.3 format)
+  - Resolved conflicts between `realpath()` and `getcwd()` returning different path formats
+- **PHPStan Type Errors** - Added proper type assertions for reflection method results
+- **Cross-Platform Testing** - Improved test compatibility across operating systems
+  - Skip Windows-incompatible permission tests
+  - Enhanced cleanup functions with error suppression for non-critical warnings
+- **CLI Command Conflicts** - Resolved Symfony Console command conflicts
+  - Renamed `list` command to `status` to avoid conflict with built-in list command
+  - Removed custom `--verbose` option to use Symfony Console's built-in verbose handling
+- **CI Interactive Prompts** - Fixed automated CI execution issues
+  - Added `--force` flag support to prevent interactive confirmations
+  - Updated integration tests and CI workflow to use non-interactive mode
+
+#### Changed
+- **Command Name**: `list` command renamed to `status` (maintains same functionality)
+- **Verbose Flag**: Now uses standard Symfony Console `--verbose` instead of custom implementation
+
+#### Technical Improvements
+- Enhanced Windows path handling for CI environments
+- Improved error handling and cleanup processes
+- Better cross-platform test coverage
+- Streamlined CI workflow execution
+
+### Migration Notes
+- Replace `php-commitlint list` with `php-commitlint status` in scripts and documentation
+- The `--verbose` flag continues to work as before with standard Symfony Console behavior
+
 ## [1.0.0] - 2025-06-20
 
 ### 🚀 Initial Release - PHP CommitLint
