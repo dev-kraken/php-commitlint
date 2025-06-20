@@ -1,0 +1,24 @@
+{
+  "auto_install": true,
+  "rules": {
+    "type": {
+      "required": true,
+      "allowed": ["feat", "fix", "docs", "test", "refactor", "chore", "style"]
+    },
+    "subject": {
+      "max_length": 72,
+      "case": "lower"
+    }
+  },
+  "hooks": {
+    "commit-msg": true,
+    "pre-commit": true,
+    "pre-push": false
+  },
+  "pre_commit_commands": {
+    "Code Style Check": "vendor/bin/php-cs-fixer fix --dry-run --diff",
+    "Static Analysis": "vendor/bin/phpstan analyse --no-progress",
+    "Unit Tests": "vendor/bin/pest --filter=Unit",
+    "Security Check": "composer audit"
+  }
+} 

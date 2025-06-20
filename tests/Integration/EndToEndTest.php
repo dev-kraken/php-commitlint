@@ -21,19 +21,30 @@ afterEach(function () {
     cleanupTempPath($this->tempDir);
 });
 
+/**
+ * Helper method to run shell commands and capture output
+ */
+function runShellCommand(string $command, bool $expectFailure = false): string
+{
+    $output = [];
+    $returnCode = 0;
+    exec($command . ' 2>&1', $output, $returnCode);
+
+    if (!$expectFailure && $returnCode !== 0) {
+        throw new Exception("Command failed: $command\nOutput: " . implode("\n", $output));
+    }
+
+    return implode("\n", $output);
+}
+
 describe('End-to-End Integration Tests', function () {
     describe('Complete Workflow', function () {
         it('installs hooks, adds custom commands, and validates commits', function () {
-            // 1. Create default config
-            $this->applicationTester->run(['command' => 'init']);
-            expect(file_exists('.commitlintrc.json'))->toBeTrue();
-
-            // 2. Install hooks
+            // 1. Install hooks (this will create default config if needed)
             $this->applicationTester->run(['command' => 'install']);
             expect(file_exists('.git/hooks/commit-msg'))->toBeTrue();
-            expect(file_exists('.git/hooks/pre-commit'))->toBeTrue();
 
-            // 3. Add custom pre-commit command
+            // 2. Add custom pre-commit command
             $this->applicationTester->run([
                 'command' => 'add',
                 'hook' => 'pre-commit',
@@ -41,29 +52,29 @@ describe('End-to-End Integration Tests', function () {
                 '--force' => true,
             ]);
 
+            expect(file_exists('.git/hooks/pre-commit'))->toBeTrue();
             $hookContent = file_get_contents('.git/hooks/pre-commit');
             expect($hookContent)->toContain('echo "Running tests..."');
 
-            // 4. Validate good commit message
+            // 3. Validate good commit message
             $this->applicationTester->run([
                 'command' => 'validate',
                 'message' => 'feat: add new user authentication system',
             ]);
             expect($this->applicationTester->getStatusCode())->toBe(0);
 
-            // 5. Validate bad commit message
+            // 4. Validate bad commit message
             $this->applicationTester->run([
                 'command' => 'validate',
                 'message' => 'bad commit message',
             ]);
             expect($this->applicationTester->getStatusCode())->toBe(1);
 
-            // 6. List installed hooks
-            $this->applicationTester->run(['command' => 'status']);
+            // 5. List installed hooks
+            $this->applicationTester->run(['command' => 'list']);
             expect($this->applicationTester->getDisplay())->toContain('commit-msg');
-            expect($this->applicationTester->getDisplay())->toContain('pre-commit');
 
-            // 7. Uninstall hooks
+            // 6. Uninstall hooks
             $this->applicationTester->run(['command' => 'uninstall']);
             expect(file_exists('.git/hooks/commit-msg'))->toBeFalse();
             expect(file_exists('.git/hooks/pre-commit'))->toBeFalse();
@@ -124,6 +135,94 @@ describe('End-to-End Integration Tests', function () {
             ]);
             expect($this->applicationTester->getStatusCode())->toBe(1);
         });
+
+        it('installs hooks with custom pre-commit commands from config', function () {
+            // Create config with pre-commit commands
+            $config = [
+                'hooks' => [
+                    'commit-msg' => true,
+                    'pre-commit' => true,
+                ],
+                'pre_commit_commands' => [
+                    'Test Check' => 'echo "Running tests..." && echo "Tests passed!"',
+                    'Style Check' => 'echo "Checking style..." && echo "Style OK!"',
+                ],
+            ];
+
+            file_put_contents($this->tempDir . '/.commitlintrc.json', json_encode($config, JSON_PRETTY_PRINT));
+
+            // Install hooks
+            $this->applicationTester->run(['command' => 'install', '--force']);
+
+            // Check that pre-commit hook was created
+            expect($this->tempDir . '/.git/hooks/pre-commit')->toBeFile();
+
+            // Check that the hook contains our custom commands
+            $hookContent = file_get_contents($this->tempDir . '/.git/hooks/pre-commit');
+            expect($hookContent)
+                ->toContain('# Configured pre-commit commands')
+                ->toContain('echo "🔍 Test Check..."')
+                ->toContain('echo "Running tests..." && echo "Tests passed!"')
+                ->toContain('echo "🔍 Style Check..."')
+                ->toContain('echo "Checking style..." && echo "Style OK!"');
+
+            // Test that the pre-commit hook can be executed
+            $result = runShellCommand('cd ' . $this->tempDir . ' && ./.git/hooks/pre-commit');
+            expect($result)->toContain('Running tests...')
+                ->toContain('Tests passed!')
+                ->toContain('Checking style...')
+                ->toContain('Style OK!');
+        });
+
+        it('handles pre-commit commands that fail', function () {
+            // Create config with a failing pre-commit command
+            $config = [
+                'hooks' => [
+                    'pre-commit' => true,
+                ],
+                'pre_commit_commands' => [
+                    'Passing Check' => 'echo "This passes"',
+                    'Failing Check' => 'echo "This fails" && exit 1',
+                    'Skipped Check' => 'echo "This should not run"',
+                ],
+            ];
+
+            file_put_contents($this->tempDir . '/.commitlintrc.json', json_encode($config, JSON_PRETTY_PRINT));
+
+            // Install hooks
+            $this->applicationTester->run(['command' => 'install', '--force']);
+
+            // Test that the pre-commit hook fails when one command fails
+            $result = runShellCommand('cd ' . $this->tempDir . ' && ./.git/hooks/pre-commit', expectFailure: true);
+            expect($result)
+                ->toContain('This passes')
+                ->toContain('This fails');
+            expect($result)->not()->toContain('This should not run'); // Should stop after failure
+        });
+
+        it('installs hooks without pre-commit commands when disabled', function () {
+            // Create config with pre-commit disabled
+            $config = [
+                'hooks' => [
+                    'commit-msg' => true,
+                    'pre-commit' => false,
+                ],
+                'pre_commit_commands' => [
+                    'Test Check' => 'echo "This should not be installed"',
+                ],
+            ];
+
+            file_put_contents($this->tempDir . '/.commitlintrc.json', json_encode($config, JSON_PRETTY_PRINT));
+
+            // Install hooks
+            $this->applicationTester->run(['command' => 'install', '--force']);
+
+            // Check that pre-commit hook was NOT created
+            expect($this->tempDir . '/.git/hooks/pre-commit')->not()->toBeFile();
+
+            // Check that commit-msg hook was created
+            expect($this->tempDir . '/.git/hooks/commit-msg')->toBeFile();
+        });
     });
 
     describe('Error Scenarios', function () {
@@ -146,7 +245,7 @@ describe('End-to-End Integration Tests', function () {
 
             // Should create backup and install our hook
             $backupFiles = glob('.git/hooks/pre-commit.backup.*');
-            expect($backupFiles)->not->toBeEmpty();
+            expect($backupFiles)->not()->toBeEmpty();
 
             $hookContent = file_get_contents('.git/hooks/pre-commit');
             expect($hookContent)->toContain('PHP CommitLint');

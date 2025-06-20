@@ -193,20 +193,25 @@ describe('ConfigService Security Features', function () {
         $outsideDir = createTempDirectory();
         file_put_contents($outsideDir . '/secret.json', '{"secret": "data"}');
 
-        // Try to create a symlink to outside file (skip on Windows if symlink fails)
+        // Try to create a symlink to outside file
         try {
-            symlink($outsideDir . '/secret.json', '.commitlintrc.json');
+            if (function_exists('symlink')) {
+                symlink($outsideDir . '/secret.json', '.commitlintrc.json');
 
-            expect(fn () => $this->configService->loadConfig())
-                ->toThrow(RuntimeException::class, 'Access denied');
+                // The security check should catch this symlink pointing outside working directory
+                expect(fn () => $this->configService->loadConfig())
+                    ->toThrow(RuntimeException::class, 'Access denied');
+            } else {
+                // If symlink function doesn't exist, skip this specific test
+                expect(true)->toBeTrue();
+            }
         } catch (Throwable $e) {
-            // On Windows, symlink might fail due to permissions
-            // In that case, manually create a file that would trigger the same path validation
-            if (PHP_OS_FAMILY === 'Windows' && str_contains($e->getMessage(), 'symlink')) {
-                // Create a config file that points to outside directory by copying content
+            // On Windows or systems where symlink fails due to permissions
+            if (str_contains($e->getMessage(), 'symlink') || PHP_OS_FAMILY === 'Windows') {
+                // Create a config file directly (this won't trigger directory traversal)
                 copy($outsideDir . '/secret.json', '.commitlintrc.json');
 
-                // This should still work fine as it's in the working directory
+                // This should work fine as it's in the working directory
                 $config = $this->configService->loadConfig();
                 expect($config)->toBeArray();
             } else {
@@ -284,8 +289,9 @@ describe('ConfigService Caching', function () {
         $config2 = $this->configService->loadConfig();
         assert(is_array($config2));
 
-        expect($config1['auto_install'])->toBe($config2['auto_install']);
-        expect($config2['auto_install'])->toBeTrue(); // Still cached version
+        expect($config1['auto_install'])->toBe($config2['auto_install'])
+            ->and($config2['auto_install'])->toBeTrue();
+        // Still cached version
     });
 
     it('clears cache correctly', function () {

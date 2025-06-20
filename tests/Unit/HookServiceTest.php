@@ -96,7 +96,7 @@ describe('HookService', function () {
             chmod($this->tempDir . '/.git/hooks', 0o755); // Restore permissions
         });
 
-        it('generates hook with absolute paths', function () {
+        it('generates hook with portable paths', function () {
             $this->hookService->installHooks();
 
             $hookContent = file_get_contents($this->tempDir . '/.git/hooks/commit-msg');
@@ -112,9 +112,8 @@ describe('HookService', function () {
             $normalizedPhpPath = str_replace('\\', '/', $expectedPhpPath);
             expect($hookContent)->toContain($normalizedPhpPath); // Actual PHP binary path (normalized)
 
-            // Normalize paths for cross-platform comparison
-            $normalizedTempDir = str_replace('\\', '/', $this->tempDir);
-            expect($hookContent)->toContain($normalizedTempDir); // Absolute project path
+            // Now we expect relative paths for better portability
+            expect($hookContent)->toContain('./bin/php-commitlint'); // Relative path for development mode
         });
     });
 

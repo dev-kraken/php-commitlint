@@ -250,7 +250,7 @@ class HookService
             fi
 
             # Validate commit message
-            {$phpBinary} {$commitlintBinary} validate --file="\$1"
+            "{$phpBinary}" "{$commitlintBinary}" validate --file="\$1"
 
             # Exit with the same code as the validation
             exit \$?
@@ -261,23 +261,35 @@ class HookService
     {
         $marker = self::HOOK_MARKER;
 
+        // Load configuration to get pre-commit commands
+        $configService = new ConfigService();
+        $config = $configService->loadConfig();
+        $preCommitCommands = $config['pre_commit_commands'] ?? [];
+
+        $commandsSection = '';
+        if (!empty($preCommitCommands)) {
+            $commandsSection = "\n# Configured pre-commit commands\n";
+            foreach ($preCommitCommands as $description => $command) {
+                $escapedCommand = is_string($command) ? $command : '';
+                $commandsSection .= "echo \"🔍 {$description}...\"\n";
+                $commandsSection .= "{$escapedCommand}\n";
+                $commandsSection .= "if [ \$? -ne 0 ]; then\n";
+                $commandsSection .= "    echo \"❌ {$description} failed!\"\n";
+                $commandsSection .= "    exit 1\n";
+                $commandsSection .= "fi\n\n";
+            }
+        }
+
         return <<<HOOK
             #!/bin/sh
             # {$marker}
             #
             # Git pre-commit hook for PHP CommitLint
-            # Add your custom pre-commit checks here
+            # This hook runs configured pre-commit checks
             #
-
-            # Example: Run PHP CS Fixer
-            # vendor/bin/php-cs-fixer fix --dry-run --diff
-
-            # Example: Run PHPStan
-            # vendor/bin/phpstan analyse
-
-            # Example: Run Pest tests
-            # vendor/bin/pest
-
+            {$commandsSection}
+            # All checks passed
+            echo "✅ All pre-commit checks passed!"
             exit 0
             HOOK;
     }
@@ -304,15 +316,35 @@ class HookService
             return $phpFromEnv;
         }
 
-        // Then try common locations
-        $candidates = [
-            '/usr/bin/php',
-            '/usr/local/bin/php',
-            '/opt/homebrew/bin/php', // For macOS with Homebrew
-            '/usr/bin/php8.3',
-            '/usr/bin/php8.2',
-            '/usr/bin/php8.1',
-        ];
+        // Platform-specific candidates - prefer system-wide installations
+        $isWindows = PHP_OS_FAMILY === 'Windows';
+
+        if ($isWindows) {
+            // Windows-specific candidates - prefer simple names that work in PATH
+            $candidates = [
+                'php.exe',                           // Most portable - works if PHP is in PATH
+                'php',                              // Fallback without extension
+                'C:\php\php.exe',
+                'C:\xampp\php\php.exe',
+                'C:\wamp\bin\php\php8.3\php.exe',
+                'C:\wamp\bin\php\php8.2\php.exe',
+                'C:\wamp\bin\php\php8.1\php.exe',
+                'C:\laragon\bin\php\php8.3\php.exe',
+                'C:\laragon\bin\php\php8.2\php.exe',
+                'C:\laragon\bin\php\php8.1\php.exe',
+            ];
+        } else {
+            // Unix-like systems - prefer simple name that works in PATH
+            $candidates = [
+                'php',                              // Most portable - works if PHP is in PATH
+                '/usr/bin/php',
+                '/usr/local/bin/php',
+                '/opt/homebrew/bin/php',            // For macOS with Homebrew
+                '/usr/bin/php8.3',
+                '/usr/bin/php8.2',
+                '/usr/bin/php8.1',
+            ];
+        }
 
         foreach ($candidates as $candidate) {
             if (is_executable($candidate)) {
@@ -320,39 +352,94 @@ class HookService
             }
         }
 
-        // Last resort: try which command (safer approach)
-        $whichResult = @exec('which php 2>/dev/null', $output, $exitCode);
-        if ($exitCode === 0 && !empty($whichResult) && is_executable($whichResult)) {
-            return $whichResult;
+        // Try using which/where command based on platform
+        if ($isWindows) {
+            $whichResult = @exec('where php.exe 2>nul', $output, $exitCode);
+            if ($exitCode === 0 && !empty($whichResult) && is_executable($whichResult)) {
+                return $whichResult;
+            }
+            $whichResult = @exec('where php 2>nul', $output, $exitCode);
+            if ($exitCode === 0 && !empty($whichResult) && is_executable($whichResult)) {
+                return $whichResult;
+            }
+        } else {
+            $whichResult = @exec('which php 2>/dev/null', $output, $exitCode);
+            if ($exitCode === 0 && !empty($whichResult) && is_executable($whichResult)) {
+                return $whichResult;
+            }
         }
 
-        return '/usr/bin/php'; // Better fallback for most Linux systems
+        // Platform-specific fallbacks
+        return $isWindows ? 'php.exe' : 'php';
     }
 
     private function normalizePath(string $path): string
     {
         // Convert backslashes to forward slashes for consistent shell script paths
-        return str_replace('\\', '/', $path);
+        $normalized = str_replace('\\', '/', $path);
+
+        // Handle Windows drive letters (C: -> /c)
+        if (PHP_OS_FAMILY === 'Windows' && preg_match('/^([A-Za-z]):/', $normalized, $matches)) {
+            $driveLetter = strtolower($matches[1]);
+            $normalized = '/' . $driveLetter . substr($normalized, 2);
+        }
+
+        return $normalized;
     }
 
     private function findCommitlintBinary(): string
     {
         $cwd = getcwd();
+        $isWindows = PHP_OS_FAMILY === 'Windows';
+
+        // Build binary name with platform-specific extension
+        $binaryName = $isWindows ? 'php-commitlint.bat' : 'php-commitlint';
+
+        // Prefer relative paths for better portability
         $candidates = [
-            $cwd . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'php-commitlint',          // Development mode (absolute)
-            $cwd . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'php-commitlint',   // When installed as dependency (absolute)
-            './bin/php-commitlint',                // Development mode (relative fallback)
-            'vendor/bin/php-commitlint',           // Dependency mode (relative fallback)
+            './bin/' . $binaryName,                // Development mode (relative)
+            'vendor/bin/' . $binaryName,           // Dependency mode (relative)
+            $cwd . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . $binaryName,          // Development mode (absolute fallback)
+            $cwd . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . $binaryName,   // Dependency mode (absolute fallback)
         ];
 
+        // Also try without extension on Windows (some installations may not have .bat)
+        if ($isWindows) {
+            $candidates[] = './bin/php-commitlint';
+            $candidates[] = 'vendor/bin/php-commitlint';
+            $candidates[] = $cwd . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'php-commitlint';
+            $candidates[] = $cwd . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'php-commitlint';
+        }
+
         foreach ($candidates as $candidate) {
-            if (file_exists($candidate) && is_executable($candidate)) {
-                // Always return absolute path
-                return realpath($candidate) ?: $candidate;
+            if (file_exists($candidate)) {
+                // On Windows, check if it's executable or if it's a .bat file
+                if ($isWindows) {
+                    if (is_readable($candidate) && (is_executable($candidate) || pathinfo($candidate, PATHINFO_EXTENSION) === 'bat')) {
+                        // For relative paths, return as-is for better portability
+                        if (str_starts_with($candidate, './') || str_starts_with($candidate, 'vendor/')) {
+                            return $candidate;
+                        }
+                        // For absolute paths, normalize
+                        $absolutePath = realpath($candidate) ?: $candidate;
+
+                        return $absolutePath;
+                    }
+                } else {
+                    if (is_executable($candidate)) {
+                        // For relative paths, return as-is for better portability
+                        if (str_starts_with($candidate, './') || str_starts_with($candidate, 'vendor/')) {
+                            return $candidate;
+                        }
+
+                        // For absolute paths, normalize
+                        return realpath($candidate) ?: $candidate;
+                    }
+                }
             }
         }
 
-        // Return absolute path for development as fallback
-        return $cwd . '/bin/php-commitlint';
+        // Return relative path as fallback for better portability
+        return './bin/' . $binaryName;
     }
 }

@@ -173,6 +173,12 @@ PHP CommitLint can be configured via `.commitlintrc.json` file or within your `c
     "pre-commit": false,
     "pre-push": false
   },
+  "pre_commit_commands": {
+    "Code Style Check": "vendor/bin/php-cs-fixer fix --dry-run --diff",
+    "Static Analysis": "vendor/bin/phpstan analyse --no-progress",
+    "Unit Tests": "vendor/bin/pest --filter=Unit",
+    "Security Check": "composer audit"
+  },
   "format": {
     "type": true,
     "scope": "optional",
@@ -240,7 +246,72 @@ Control which Git hooks are installed:
 }
 ```
 
-### Example Configurations
+#### Team-Wide Pre-Commit Commands (`pre_commit_commands`)
+
+Configure commands that run automatically for all team members during pre-commit:
+
+```json
+{
+  "hooks": {
+    "pre-commit": true
+  },
+  "pre_commit_commands": {
+    "Code Style Check": "vendor/bin/php-cs-fixer fix --dry-run --diff",
+    "Static Analysis": "vendor/bin/phpstan analyse --no-progress", 
+    "Unit Tests": "vendor/bin/pest --filter=Unit",
+    "Security Check": "composer audit"
+  }
+}
+```
+
+**Benefits:**
+- **Automatic for all team members** - No manual hook setup required
+- **Consistent quality checks** - Same commands run for everyone
+- **Version controlled** - Configuration is committed and shared
+- **Easy maintenance** - Update once, applies to all developers
+
+When any team member runs `composer install` (with `auto_install: true`), these commands automatically run before every commit.
+
+#### Format Configuration (`format`)
+- **`type`** (`boolean`) - Require commit type
+- **`scope`** (`string`) - Scope requirement: "required", "optional", "forbidden"  
+- **`description`** (`boolean`) - Require commit description
+- **`body`** (`string`) - Body requirement: "required", "optional", "forbidden"
+- **`footer`** (`string`) - Footer requirement: "required", "optional", "forbidden"
+
+## 🪟 Windows Support
+
+PHP CommitLint provides full Windows compatibility with automatic detection and setup:
+
+### **Automatic Windows Support**
+- **PHP Detection**: Automatically finds PHP in XAMPP, WAMP, Laragon, or standard installations
+- **Path Handling**: Converts Windows paths for Git Bash compatibility  
+- **Batch Wrapper**: Includes `php-commitlint.bat` for Windows CLI
+- **Hook Compatibility**: Git hooks work seamlessly in Git Bash, PowerShell, and Command Prompt
+
+### **Windows Installation**
+```bash
+# Works in PowerShell, Command Prompt, or Git Bash
+composer require --dev dev-kraken/php-commitlint
+vendor\bin\php-commitlint install  # Windows
+# OR
+vendor/bin/php-commitlint install   # Git Bash
+```
+
+### **Windows Troubleshooting**
+
+**If you see "PHP CommitLint not found":**
+1. Ensure PHP is in your PATH: `php --version`
+2. Try using the batch file: `vendor\bin\php-commitlint.bat install`
+3. Check Git Bash compatibility: Use `/c/path/to/php` format
+
+**Common Windows Scenarios:**
+- **XAMPP**: `C:\xampp\php\php.exe` (automatically detected)
+- **WAMP**: `C:\wamp\bin\php\php8.3\php.exe` (automatically detected)  
+- **Laragon**: `C:\laragon\bin\php\php8.3\php.exe` (automatically detected)
+- **Standalone**: `C:\php\php.exe` (automatically detected)
+
+## 📖 Example Configurations
 
 #### Minimal Configuration (`examples/commitlintrc.minimal.json`)
 

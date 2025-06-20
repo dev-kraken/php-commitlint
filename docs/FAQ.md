@@ -47,6 +47,93 @@ vendor/bin/php-commitlint install
 
 Solution: Run `composer install` in your project root.
 
+### Q: How do I install PHP CommitLint for my team?
+
+**A:** For team-wide installation, you have several options:
+
+1. **Individual Installation** (each developer):
+   ```bash
+   composer require --dev dev-kraken/php-commitlint
+   vendor/bin/php-commitlint install
+   ```
+
+2. **Team Configuration** (automatic for everyone):
+   ```json
+   {
+     "auto_install": true,
+     "hooks": {
+       "commit-msg": true,
+       "pre-commit": true
+     },
+     "pre_commit_commands": {
+       "Code Style": "vendor/bin/php-cs-fixer fix --dry-run",
+       "Tests": "vendor/bin/pest"
+     }
+   }
+   ```
+   Save this as `.commitlintrc.json` and commit it. When team members run `composer install`, hooks install automatically!
+
+### Q: The tool says "PHP CommitLint not found" on Windows. How do I fix this?
+
+**A:** This is a common Windows path issue. Try these solutions:
+
+1. **Use the batch file**:
+   ```batch
+   vendor\bin\php-commitlint.bat install
+   ```
+
+2. **Ensure PHP is in PATH**:
+   ```batch
+   php --version
+   ```
+
+3. **Check Git Bash compatibility**: Use forward slashes in Git Bash:
+   ```bash
+   vendor/bin/php-commitlint install
+   ```
+
+4. **Manual PHP path** (if auto-detection fails):
+   The tool automatically detects PHP from:
+   - `C:\php\php.exe`
+   - `C:\xampp\php\php.exe`
+   - `C:\wamp\bin\php\php8.3\php.exe`
+   - `C:\laragon\bin\php\php8.3\php.exe`
+
+**Q: How do I share pre-commit commands with my entire team?**
+
+**A:** Use the `pre_commit_commands` configuration in your `.commitlintrc.json`:
+
+```json
+{
+  "auto_install": true,
+  "hooks": {
+    "pre-commit": true
+  },
+  "pre_commit_commands": {
+    "Code Style Check": "vendor/bin/php-cs-fixer fix --dry-run --diff",
+    "Static Analysis": "vendor/bin/phpstan analyse --no-progress",
+    "Unit Tests": "vendor/bin/pest --filter=Unit",
+    "Security Check": "composer audit"
+  }
+}
+```
+
+When anyone clones the repository and runs `composer install`, these commands automatically run before every commit.
+
+### Q: Can I use this on Windows with XAMPP/WAMP/Laragon?
+
+**A:** Yes! The tool automatically detects popular Windows PHP installations:
+- **XAMPP**: `C:\xampp\php\php.exe`
+- **WAMP**: `C:\wamp\bin\php\php8.x\php.exe`
+- **Laragon**: `C:\laragon\bin\php\php8.x\php.exe`
+- **Standalone**: `C:\php\php.exe`
+
+Just install normally:
+```bash
+composer require --dev dev-kraken/php-commitlint
+vendor/bin/php-commitlint install
+```
+
 ## Configuration
 
 ### Q: Where should I put my configuration?

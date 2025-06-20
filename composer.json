@@ -61,7 +61,8 @@
     }
   },
   "bin": [
-    "bin/php-commitlint"
+    "bin/php-commitlint",
+    "bin/php-commitlint.bat"
   ],
   "scripts": {
     "post-install-cmd": "DevKraken\\PhpCommitlint\\Installer::postInstall",

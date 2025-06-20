@@ -235,6 +235,12 @@ class ConfigService
                 'pre-commit' => false,
                 'pre-push' => false,
             ],
+            'pre_commit_commands' => [
+                // Examples of pre-commit commands that run for all team members
+                // 'Code Style Check' => 'vendor/bin/php-cs-fixer fix --dry-run --diff',
+                // 'Static Analysis' => 'vendor/bin/phpstan analyse',
+                // 'Run Tests' => 'vendor/bin/pest',
+            ],
             'format' => [
                 'type' => true,
                 'scope' => 'optional',
