@@ -85,8 +85,8 @@ class ConfigService
         }
 
         // Normalize paths for cross-platform compatibility
-        $normalizedRealPath = str_replace('\\', '/', $realPath);
-        $normalizedWorkingDir = str_replace('\\', '/', $workingDir);
+        $normalizedRealPath = $this->normalizePath($realPath);
+        $normalizedWorkingDir = $this->normalizePath($workingDir);
 
         if (!str_starts_with($normalizedRealPath, $normalizedWorkingDir)) {
             throw new \RuntimeException("Access denied");
@@ -136,6 +136,20 @@ class ConfigService
         }
 
         return basename($filePath);
+    }
+
+    private function normalizePath(string $path): string
+    {
+        // Convert backslashes to forward slashes
+        $normalized = str_replace('\\', '/', $path);
+
+        // Convert to lowercase on Windows for case-insensitive comparison
+        if (PHP_OS_FAMILY === 'Windows') {
+            $normalized = strtolower($normalized);
+        }
+
+        // Remove any trailing slashes for consistent comparison
+        return rtrim($normalized, '/');
     }
 
     public function configExists(): bool

@@ -225,8 +225,8 @@ class HookService
 
     private function createCommitMsgHookContent(): string
     {
-        $phpBinary = $this->findPhpBinary();
-        $commitlintBinary = $this->findCommitlintBinary();
+        $phpBinary = $this->normalizePath($this->findPhpBinary());
+        $commitlintBinary = $this->normalizePath($this->findCommitlintBinary());
         $marker = self::HOOK_MARKER;
 
         return <<<HOOK
@@ -329,12 +329,18 @@ class HookService
         return '/usr/bin/php'; // Better fallback for most Linux systems
     }
 
+    private function normalizePath(string $path): string
+    {
+        // Convert backslashes to forward slashes for consistent shell script paths
+        return str_replace('\\', '/', $path);
+    }
+
     private function findCommitlintBinary(): string
     {
         $cwd = getcwd();
         $candidates = [
-            $cwd . '/bin/php-commitlint',          // Development mode (absolute)
-            $cwd . '/vendor/bin/php-commitlint',   // When installed as dependency (absolute)
+            $cwd . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'php-commitlint',          // Development mode (absolute)
+            $cwd . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'php-commitlint',   // When installed as dependency (absolute)
             './bin/php-commitlint',                // Development mode (relative fallback)
             'vendor/bin/php-commitlint',           // Dependency mode (relative fallback)
         ];
