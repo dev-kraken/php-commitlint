@@ -38,13 +38,6 @@ final class ListCommand extends Command
     protected function configure(): void
     {
         $this->addOption(
-            'verbose',
-            'v',
-            InputOption::VALUE_NONE,
-            'Show detailed information'
-        );
-
-        $this->addOption(
             'hooks-only',
             null,
             InputOption::VALUE_NONE,
@@ -62,7 +55,7 @@ final class ListCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $io = new SymfonyStyle($input, $output);
-        $verbose = (bool) $input->getOption('verbose');
+        $verbose = $output->isVerbose();
         $hooksOnly = (bool) $input->getOption('hooks-only');
         $configOnly = (bool) $input->getOption('config-only');
 
