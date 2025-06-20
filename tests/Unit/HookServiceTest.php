@@ -83,7 +83,7 @@ describe('HookService', function () {
         it('throws exception if hooks directory is not writable', function () {
             chmod($this->tempDir . '/.git/hooks', 0o444); // Read-only
 
-            expect(fn () => $this->hookService->installHooks())
+            expect(fn() => $this->hookService->installHooks())
                 ->toThrow(RuntimeException::class, 'Hooks directory is not writable');
 
             chmod($this->tempDir . '/.git/hooks', 0o755); // Restore permissions
@@ -94,7 +94,13 @@ describe('HookService', function () {
 
             $hookContent = file_get_contents($this->tempDir . '/.git/hooks/commit-msg');
 
-            expect($hookContent)->toContain('/usr/bin/php'); // Absolute PHP path
+            // Get the actual PHP binary path that the service detects
+            $reflection = new ReflectionClass($this->hookService);
+            $method = $reflection->getMethod('findPhpBinary');
+            $method->setAccessible(true);
+            $expectedPhpPath = $method->invoke($this->hookService);
+
+            expect($hookContent)->toContain($expectedPhpPath); // Actual PHP binary path
             expect($hookContent)->toContain($this->tempDir); // Absolute project path
         });
     });
@@ -130,14 +136,14 @@ describe('HookService', function () {
         });
 
         it('validates hook name to prevent path traversal', function () {
-            expect(fn () => $this->hookService->addCustomHook('../../../etc/passwd', 'evil command'))
+            expect(fn() => $this->hookService->addCustomHook('../../../etc/passwd', 'evil command'))
                 ->toThrow(InvalidArgumentException::class, 'Invalid hook name');
         });
 
         it('validates command length', function () {
             $longCommand = str_repeat('a', 1001);
 
-            expect(fn () => $this->hookService->addCustomHook('pre-commit', $longCommand))
+            expect(fn() => $this->hookService->addCustomHook('pre-commit', $longCommand))
                 ->toThrow(InvalidArgumentException::class, 'Command too long');
         });
 
