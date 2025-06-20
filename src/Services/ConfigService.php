@@ -180,6 +180,16 @@ class ConfigService
     public function createDefaultConfig(): void
     {
         $config = $this->getDefaultConfig();
+
+        // Add schema reference for IDE support
+        $schemaUrl = 'https://raw.githubusercontent.com/dev-kraken/php-commitlint/main/docs/schema.json';
+        $config = ['$schema' => $schemaUrl] + $config;
+
+        // Ensure pre_commit_commands is encoded as an object, not array
+        if (isset($config['pre_commit_commands']) && empty($config['pre_commit_commands'])) {
+            $config['pre_commit_commands'] = new \stdClass();
+        }
+
         $json = json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
         file_put_contents($this->getConfigPath(), $json);
     }
@@ -251,6 +261,11 @@ class ConfigService
 
     public function saveConfig(array $config): void
     {
+        // Ensure pre_commit_commands is encoded as an object, not array
+        if (isset($config['pre_commit_commands']) && empty($config['pre_commit_commands'])) {
+            $config['pre_commit_commands'] = new \stdClass();
+        }
+
         $json = json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
         file_put_contents($this->getConfigPath(), $json);
     }

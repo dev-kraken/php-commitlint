@@ -1,0 +1,193 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PHP CommitLint Configuration",
+  "description": "Configuration schema for php-commitlint",
+  "type": "object",
+  "properties": {
+    "auto_install": {
+      "type": "boolean",
+      "description": "Automatically install hooks when composer install/update runs",
+      "default": false
+    },
+    "rules": {
+      "type": "object",
+      "description": "Validation rules for commit messages",
+      "properties": {
+        "type": {
+          "type": "object",
+          "properties": {
+            "required": {
+              "type": "boolean",
+              "default": true
+            },
+            "allowed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": ["feat", "fix", "docs", "style", "refactor", "perf", "test", "chore", "ci", "build", "revert"]
+            }
+          },
+          "additionalProperties": false
+        },
+        "scope": {
+          "type": "object",
+          "properties": {
+            "required": {
+              "type": "boolean",
+              "default": false
+            },
+            "allowed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            }
+          },
+          "additionalProperties": false
+        },
+        "subject": {
+          "type": "object",
+          "properties": {
+            "min_length": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 1
+            },
+            "max_length": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 100
+            },
+            "case": {
+              "type": "string",
+              "enum": ["lower", "upper", "any"],
+              "default": "any"
+            },
+            "end_with_period": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "required": {
+              "type": "boolean",
+              "default": false
+            },
+            "max_length": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 200
+            },
+            "max_line_length": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 100
+            },
+            "leading_blank": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "footer": {
+          "type": "object",
+          "properties": {
+            "required": {
+              "type": "boolean",
+              "default": false
+            },
+            "max_length": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 100
+            },
+            "leading_blank": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "patterns": {
+      "type": "object",
+      "description": "Custom regex patterns for validation",
+      "patternProperties": {
+        "^[a-zA-Z_][a-zA-Z0-9_]*$": {
+          "type": "string",
+          "description": "Regular expression pattern"
+        }
+      },
+      "additionalProperties": false
+    },
+    "hooks": {
+      "type": "object",
+      "description": "Git hook configuration",
+      "properties": {
+        "commit-msg": {
+          "type": "boolean",
+          "default": true
+        },
+        "pre-commit": {
+          "type": "boolean",
+          "default": false
+        },
+        "pre-push": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "pre_commit_commands": {
+      "type": "object",
+      "description": "Commands to run during pre-commit hook",
+      "patternProperties": {
+        ".*": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "format": {
+      "type": "object",
+      "description": "Output format configuration",
+      "properties": {
+        "type": {
+          "type": "boolean",
+          "default": true
+        },
+        "scope": {
+          "type": "string",
+          "enum": ["optional", "required"],
+          "default": "optional"
+        },
+        "description": {
+          "type": "boolean",
+          "default": true
+        },
+        "body": {
+          "type": "string",
+          "enum": ["optional", "required"],
+          "default": "optional"
+        },
+        "footer": {
+          "type": "string",
+          "enum": ["optional", "required"],
+          "default": "optional"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+} 

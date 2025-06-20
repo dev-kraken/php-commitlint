@@ -260,36 +260,64 @@ class HookService
     private function createPreCommitHookContent(): string
     {
         $marker = self::HOOK_MARKER;
-
-        // Load configuration to get pre-commit commands
-        $configService = new ConfigService();
-        $config = $configService->loadConfig();
-        $preCommitCommands = $config['pre_commit_commands'] ?? [];
-
-        $commandsSection = '';
-        if (!empty($preCommitCommands)) {
-            $commandsSection = "\n# Configured pre-commit commands\n";
-            foreach ($preCommitCommands as $description => $command) {
-                $escapedCommand = is_string($command) ? $command : '';
-                $commandsSection .= "echo \"🔍 {$description}...\"\n";
-                $commandsSection .= "{$escapedCommand}\n";
-                $commandsSection .= "if [ \$? -ne 0 ]; then\n";
-                $commandsSection .= "    echo \"❌ {$description} failed!\"\n";
-                $commandsSection .= "    exit 1\n";
-                $commandsSection .= "fi\n\n";
-            }
-        }
+        $phpBinary = $this->findPhpBinary();
+        $commitlintBinary = $this->findCommitlintBinary();
 
         return <<<HOOK
             #!/bin/sh
             # {$marker}
             #
             # Git pre-commit hook for PHP CommitLint
-            # This hook runs configured pre-commit checks
+            # This hook dynamically reads pre-commit commands from configuration
             #
-            {$commandsSection}
-            # All checks passed
-            echo "✅ All pre-commit checks passed!"
+
+            # Function to run pre-commit commands from config
+            run_pre_commit_commands() {
+                # Use PHP to read and execute pre-commit commands from config
+                "{$phpBinary}" -r '
+                \$configFile = ".commitlintrc.json";
+                if (!file_exists(\$configFile)) {
+                    echo "⚠️  No .commitlintrc.json found, skipping pre-commit commands" . PHP_EOL;
+                    exit(0);
+                }
+
+                \$config = json_decode(file_get_contents(\$configFile), true);
+                if (!is_array(\$config)) {
+                    echo "⚠️  Invalid .commitlintrc.json format, skipping pre-commit commands" . PHP_EOL;
+                    exit(0);
+                }
+
+                \$commands = \$config["pre_commit_commands"] ?? [];
+                if (empty(\$commands)) {
+                    echo "✅ No pre-commit commands configured" . PHP_EOL;
+                    exit(0);
+                }
+
+                // Handle both object and array formats
+                if (is_object(\$commands)) {
+                    \$commands = (array) \$commands;
+                }
+
+                foreach (\$commands as \$description => \$command) {
+                    if (!is_string(\$command)) continue;
+                    
+                    echo "🔍 " . \$description . "..." . PHP_EOL;
+                    \$exitCode = 0;
+                    system(\$command, \$exitCode);
+                    
+                    if (\$exitCode !== 0) {
+                        echo "❌ " . \$description . " failed!" . PHP_EOL;
+                        exit(1);
+                    }
+                }
+
+                echo "✅ All pre-commit checks passed!" . PHP_EOL;
+                '
+            }
+
+            # Run pre-commit commands
+            run_pre_commit_commands
+
             exit 0
             HOOK;
     }
