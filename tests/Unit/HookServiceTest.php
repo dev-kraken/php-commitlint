@@ -68,8 +68,15 @@ describe('HookService', function () {
             $this->hookService->installHooks();
 
             expect(file_exists($this->tempDir . '/.git/hooks/commit-msg'))->toBeTrue()
-                ->and(file_exists($this->tempDir . '/.git/hooks/pre-commit'))->toBeTrue()
-                ->and(is_executable($this->tempDir . '/.git/hooks/commit-msg'))->toBeTrue();
+                ->and(file_exists($this->tempDir . '/.git/hooks/pre-commit'))->toBeTrue();
+
+            // On Windows, executable permission check works differently
+            if (PHP_OS_FAMILY !== 'Windows') {
+                expect(is_executable($this->tempDir . '/.git/hooks/commit-msg'))->toBeTrue();
+            } else {
+                // On Windows, just check the file has proper content
+                expect(file_get_contents($this->tempDir . '/.git/hooks/commit-msg'))->toContain('#!/bin/sh');
+            }
         });
 
         it('creates hooks directory if it does not exist', function () {
@@ -83,7 +90,7 @@ describe('HookService', function () {
         it('throws exception if hooks directory is not writable', function () {
             chmod($this->tempDir . '/.git/hooks', 0o444); // Read-only
 
-            expect(fn() => $this->hookService->installHooks())
+            expect(fn () => $this->hookService->installHooks())
                 ->toThrow(RuntimeException::class, 'Hooks directory is not writable');
 
             chmod($this->tempDir . '/.git/hooks', 0o755); // Restore permissions
@@ -101,7 +108,10 @@ describe('HookService', function () {
             $expectedPhpPath = $method->invoke($this->hookService);
 
             expect($hookContent)->toContain($expectedPhpPath); // Actual PHP binary path
-            expect($hookContent)->toContain($this->tempDir); // Absolute project path
+
+            // Normalize paths for cross-platform comparison
+            $normalizedTempDir = str_replace('\\', '/', $this->tempDir);
+            expect($hookContent)->toContain($normalizedTempDir); // Absolute project path
         });
     });
 
@@ -136,14 +146,14 @@ describe('HookService', function () {
         });
 
         it('validates hook name to prevent path traversal', function () {
-            expect(fn() => $this->hookService->addCustomHook('../../../etc/passwd', 'evil command'))
+            expect(fn () => $this->hookService->addCustomHook('../../../etc/passwd', 'evil command'))
                 ->toThrow(InvalidArgumentException::class, 'Invalid hook name');
         });
 
         it('validates command length', function () {
             $longCommand = str_repeat('a', 1001);
 
-            expect(fn() => $this->hookService->addCustomHook('pre-commit', $longCommand))
+            expect(fn () => $this->hookService->addCustomHook('pre-commit', $longCommand))
                 ->toThrow(InvalidArgumentException::class, 'Command too long');
         });
 

@@ -80,7 +80,15 @@ class ConfigService
         }
 
         $workingDir = getcwd();
-        if ($workingDir === false || !str_starts_with($realPath, $workingDir)) {
+        if ($workingDir === false) {
+            throw new \RuntimeException("Failed to get working directory");
+        }
+
+        // Normalize paths for cross-platform compatibility
+        $normalizedRealPath = str_replace('\\', '/', $realPath);
+        $normalizedWorkingDir = str_replace('\\', '/', $workingDir);
+
+        if (!str_starts_with($normalizedRealPath, $normalizedWorkingDir)) {
             throw new \RuntimeException("Access denied");
         }
 
@@ -124,7 +132,7 @@ class ConfigService
     {
         $workingDir = getcwd();
         if ($workingDir !== false && str_starts_with($filePath, $workingDir)) {
-            return ltrim(substr($filePath, strlen($workingDir)), '/');
+            return ltrim(substr($filePath, strlen($workingDir)), '/\\');
         }
 
         return basename($filePath);
@@ -137,7 +145,7 @@ class ConfigService
 
     public function getConfigPath(): string
     {
-        return getcwd() . '/' . self::CONFIG_FILE;
+        return getcwd() . DIRECTORY_SEPARATOR . self::CONFIG_FILE;
     }
 
     public function createDefaultConfig(): void
