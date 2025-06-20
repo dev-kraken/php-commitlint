@@ -197,7 +197,7 @@ jobs:
       - name: Test custom hooks
         run: |
           cd test-repo
-          ../bin/php-commitlint add pre-commit "echo 'Pre-commit hook executed'"
+          ../bin/php-commitlint add pre-commit "echo 'Pre-commit hook executed'" --force
           ../bin/php-commitlint list
           ../bin/php-commitlint remove pre-commit --force
 
