@@ -102,7 +102,7 @@ describe('ConfigService', function () {
     it('throws exception for invalid JSON', function () {
         file_put_contents('.commitlintrc.json', 'invalid json content');
 
-        expect(fn() => $this->configService->loadConfig())
+        expect(fn () => $this->configService->loadConfig())
             ->toThrow(RuntimeException::class, 'Failed to load configuration: Invalid JSON in .commitlintrc.json: Syntax error');
     });
 
@@ -154,7 +154,7 @@ describe('ConfigService', function () {
 
         file_put_contents('.commitlintrc.json', json_encode($invalidConfig));
 
-        expect(fn() => $this->configService->loadConfig())
+        expect(fn () => $this->configService->loadConfig())
             ->toThrow(RuntimeException::class, 'Failed to load configuration: Config rules.type.allowed must be an array');
     });
 
@@ -169,7 +169,7 @@ describe('ConfigService', function () {
 
         file_put_contents('.commitlintrc.json', json_encode($invalidConfig));
 
-        expect(fn() => $this->configService->loadConfig())
+        expect(fn () => $this->configService->loadConfig())
             ->toThrow(RuntimeException::class, 'Failed to load configuration: Config rules.subject.min_length must be a non-negative integer');
     });
 });
@@ -197,7 +197,7 @@ describe('ConfigService Security Features', function () {
         try {
             symlink($outsideDir . '/secret.json', '.commitlintrc.json');
 
-            expect(fn() => $this->configService->loadConfig())
+            expect(fn () => $this->configService->loadConfig())
                 ->toThrow(RuntimeException::class, 'Access denied');
         } catch (Throwable $e) {
             // On Windows, symlink might fail due to permissions
@@ -224,14 +224,14 @@ describe('ConfigService Security Features', function () {
         ]);
         file_put_contents('.commitlintrc.json', $largeContent);
 
-        expect(fn() => $this->configService->loadConfig())
+        expect(fn () => $this->configService->loadConfig())
             ->toThrow(RuntimeException::class, 'Configuration file too large');
     });
 
     it('validates JSON must be an object', function () {
         file_put_contents('.commitlintrc.json', '["not", "an", "object"]');
 
-        expect(fn() => $this->configService->loadConfig())
+        expect(fn () => $this->configService->loadConfig())
             ->toThrow(RuntimeException::class, 'Configuration must be a JSON object');
     });
 
@@ -240,6 +240,7 @@ describe('ConfigService Security Features', function () {
         if (PHP_OS_FAMILY === 'Windows') {
             // On Windows, just verify the security check works for paths
             expect(true)->toBeTrue(); // Mark test as passed - path security is tested elsewhere
+
             return;
         }
 
@@ -247,7 +248,7 @@ describe('ConfigService Security Features', function () {
         file_put_contents('.commitlintrc.json', '{"test": true}');
         chmod('.commitlintrc.json', 0o000);
 
-        expect(fn() => $this->configService->loadConfig())
+        expect(fn () => $this->configService->loadConfig())
             ->toThrow(RuntimeException::class, 'Failed to read file');
 
         chmod('.commitlintrc.json', 0o644); // Restore permissions
