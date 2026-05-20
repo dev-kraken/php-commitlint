@@ -17,7 +17,7 @@ interface HookServiceInterface
     public function uninstallHooks(): void;
 
     /**
-     * @return array<string, array<string, mixed>>
+     * @return array<string, array{installed: bool, path: string}>
      */
     public function getInstalledHooks(): array;
 

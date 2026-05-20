@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace DevKraken\PhpCommitlint\Commands;
 
+use DevKraken\PhpCommitlint\Commands\Concerns\RequiresGitRepository;
 use DevKraken\PhpCommitlint\Enums\ExitCode;
 use DevKraken\PhpCommitlint\ServiceContainer;
 use DevKraken\PhpCommitlint\Services\ConfigService;
 use DevKraken\PhpCommitlint\Services\HookService;
 use DevKraken\PhpCommitlint\Services\LoggerService;
+use RuntimeException;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -23,6 +25,8 @@ use Throwable;
 )]
 final class InstallCommand extends Command
 {
+    use RequiresGitRepository;
+
     private readonly ConfigService $configService;
     private readonly HookService $hookService;
     private readonly LoggerService $logger;
@@ -37,34 +41,24 @@ final class InstallCommand extends Command
 
     protected function configure(): void
     {
-        $this->addOption(
-            'force',
-            'f',
-            InputOption::VALUE_NONE,
-            'Force installation even if hooks already exist'
-        );
-
-        $this->addOption(
-            'skip-config',
-            null,
-            InputOption::VALUE_NONE,
-            'Skip creating default configuration file'
-        );
+        $this
+            ->addOption('force', 'f', InputOption::VALUE_NONE, 'Force installation even if hooks already exist')
+            ->addOption('skip-config', null, InputOption::VALUE_NONE, 'Skip creating default configuration file');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $io = new SymfonyStyle($input, $output);
-        $force = (bool) $input->getOption('force');
-        $skipConfig = (bool) $input->getOption('skip-config');
-
         $io->title('🎯 PHP CommitLint - Installing Git Hooks');
 
         try {
-            $this->validateGitRepository($io);
-            $this->handleExistingHooks($io, $force);
+            $this->assertGitRepository(
+                $this->hookService,
+                'Not a Git repository! Please run this command in a Git repository.'
+            );
+            $this->confirmHookOverwriteIfNeeded($io, (bool) $input->getOption('force'));
             $this->installHooks($io);
-            $this->createConfigurationIfNeeded($io, $skipConfig);
+            $this->createConfigurationIfNeeded($io, (bool) $input->getOption('skip-config'));
             $this->showSuccessMessage($io);
 
             $this->logger->info('Git hooks installed successfully');
@@ -78,23 +72,18 @@ final class InstallCommand extends Command
         }
     }
 
-    private function validateGitRepository(SymfonyStyle $io): void
+    private function confirmHookOverwriteIfNeeded(SymfonyStyle $io, bool $force): void
     {
-        if (!$this->hookService->isGitRepository()) {
-            throw new \RuntimeException('Not a Git repository! Please run this command in a Git repository.');
+        if ($force || !$this->hookService->hasExistingHooks()) {
+            return;
         }
-    }
 
-    private function handleExistingHooks(SymfonyStyle $io, bool $force): void
-    {
-        if (!$force && $this->hookService->hasExistingHooks()) {
-            $io->warning('⚠️  Git hooks already exist!');
+        $io->warning('⚠️  Git hooks already exist!');
 
-            if (!$io->confirm('Do you want to overwrite existing hooks?', false)) {
-                $io->note('Installation cancelled.');
+        if (!$io->confirm('Do you want to overwrite existing hooks?', false)) {
+            $io->note('Installation cancelled.');
 
-                throw new \RuntimeException('Installation cancelled by user.');
-            }
+            throw new RuntimeException('Installation cancelled by user.');
         }
     }
 
@@ -111,13 +100,15 @@ final class InstallCommand extends Command
             return;
         }
 
-        if (!$this->configService->configExists()) {
-            $io->section('⚙️  Creating configuration...');
-            $this->configService->createDefaultConfig();
-            $io->text('📝 Created default configuration file: .commitlintrc.json');
-        } else {
+        if ($this->configService->configExists()) {
             $io->text('📝 Using existing configuration file');
+
+            return;
         }
+
+        $io->section('⚙️  Creating configuration...');
+        $this->configService->createDefaultConfig();
+        $io->text('📝 Created default configuration file: .commitlintrc.json');
     }
 
     private function showSuccessMessage(SymfonyStyle $io): void
@@ -129,7 +120,7 @@ final class InstallCommand extends Command
         $io->definitionList(
             ['Invalid commit' => 'git commit -m "bad commit message"'],
             ['Valid commit' => 'git commit -m "feat: add new validation feature"'],
-            ['With scope' => 'git commit -m "fix(auth): resolve login validation issue"']
+            ['With scope' => 'git commit -m "fix(auth): resolve login validation issue"'],
         );
     }
 }

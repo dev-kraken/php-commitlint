@@ -8,24 +8,21 @@ use DevKraken\PhpCommitlint\Services\ConfigService;
 use DevKraken\PhpCommitlint\Services\HookService;
 use DevKraken\PhpCommitlint\Services\LoggerService;
 use DevKraken\PhpCommitlint\Services\ValidationService;
+use InvalidArgumentException;
 
 final class ServiceContainer
 {
     private static ?self $instance = null;
 
-    /**
-     * @var array<class-string, object>
-     */
+    /** @var array<class-string, object> */
     private array $services = [];
 
-    /**
-     * @var array<class-string, callable(): object>
-     */
+    /** @var array<class-string, callable(): object> */
     private array $factories = [];
 
     private function __construct()
     {
-        $this->registerFactories();
+        $this->registerDefaultFactories();
     }
 
     public static function getInstance(): self
@@ -86,7 +83,7 @@ final class ServiceContainer
     public function setFactory(string $className, callable $factory): void
     {
         $this->factories[$className] = $factory;
-        unset($this->services[$className]); // Clear cached instance
+        unset($this->services[$className]);
     }
 
     public function clearServices(): void
@@ -97,7 +94,7 @@ final class ServiceContainer
     public function reset(): void
     {
         $this->services = [];
-        $this->registerFactories();
+        $this->registerDefaultFactories();
     }
 
     /**
@@ -107,32 +104,21 @@ final class ServiceContainer
      */
     private function createService(string $className): object
     {
-        if (isset($this->factories[$className])) {
-            /** @var T */
-            $service = ($this->factories[$className])();
-
-            return $service;
+        if (!isset($this->factories[$className])) {
+            throw new InvalidArgumentException("Unknown service: {$className}");
         }
 
         /** @var T */
-        $service = match ($className) {
-            ConfigService::class => new ConfigService(),
-            HookService::class => new HookService(),
-            ValidationService::class => new ValidationService(),
-            LoggerService::class => new LoggerService(),
-            default => throw new \InvalidArgumentException("Unknown service: {$className}")
-        };
-
-        return $service;
+        return ($this->factories[$className])();
     }
 
-    private function registerFactories(): void
+    private function registerDefaultFactories(): void
     {
         $this->factories = [
-            ConfigService::class => fn () => new ConfigService(),
-            HookService::class => fn () => new HookService(),
-            ValidationService::class => fn () => new ValidationService(),
-            LoggerService::class => fn () => new LoggerService(),
+            ConfigService::class => static fn (): ConfigService => new ConfigService(),
+            HookService::class => static fn (): HookService => new HookService(),
+            ValidationService::class => static fn (): ValidationService => new ValidationService(),
+            LoggerService::class => static fn (): LoggerService => new LoggerService(),
         ];
     }
 }

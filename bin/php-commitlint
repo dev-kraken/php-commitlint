@@ -5,15 +5,14 @@ declare(strict_types=1);
 
 use DevKraken\PhpCommitlint\Application;
 
-// Try to find autoloader
-$possibleAutoloaders = [
+$autoloaderCandidates = [
     __DIR__ . '/../vendor/autoload.php',
     __DIR__ . '/../../../autoload.php',
     __DIR__ . '/../../../../autoload.php',
 ];
 
 $autoloaderFound = false;
-foreach ($possibleAutoloaders as $autoloader) {
+foreach ($autoloaderCandidates as $autoloader) {
     if (file_exists($autoloader)) {
         require_once $autoloader;
         $autoloaderFound = true;
@@ -28,9 +27,8 @@ if (!$autoloaderFound) {
 }
 
 try {
-    $application = new Application();
-    $application->run();
+    exit((new Application())->run());
 } catch (Throwable $e) {
-    fwrite(STDERR, "Error: " . $e->getMessage() . "\n");
+    fwrite(STDERR, 'Error: ' . $e->getMessage() . "\n");
     exit(1);
-} 
+}

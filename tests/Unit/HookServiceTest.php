@@ -106,7 +106,6 @@ describe('HookService', function () {
             // Get the actual PHP binary path that the service detects
             $reflection = new ReflectionClass($this->hookService);
             $method = $reflection->getMethod('findPhpBinary');
-            $method->setAccessible(true);
             $expectedPhpPath = $method->invoke($this->hookService);
             assert(is_string($expectedPhpPath));
 
@@ -260,7 +259,6 @@ describe('Binary Detection', function () {
         $hookService = new HookService();
         $reflection = new ReflectionClass($hookService);
         $method = $reflection->getMethod('findPhpBinary');
-        $method->setAccessible(true);
 
         $phpBinary = $method->invoke($hookService);
 
@@ -272,7 +270,6 @@ describe('Binary Detection', function () {
         $hookService = new HookService();
         $reflection = new ReflectionClass($hookService);
         $method = $reflection->getMethod('findCommitlintBinary');
-        $method->setAccessible(true);
 
         $commitlintBinary = $method->invoke($hookService);
 

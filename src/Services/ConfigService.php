@@ -4,167 +4,33 @@ declare(strict_types=1);
 
 namespace DevKraken\PhpCommitlint\Services;
 
+use RuntimeException;
+use Throwable;
+
 class ConfigService
 {
-    private const CONFIG_FILE = '.commitlintrc.json';
-    private const COMPOSER_CONFIG_KEY = 'php-commitlint';
+    public const string CONFIG_FILE = '.commitlintrc.json';
+    public const string COMPOSER_FILE = 'composer.json';
+    public const string COMPOSER_CONFIG_KEY = 'php-commitlint';
 
+    private const string SCHEMA_URL = 'https://raw.githubusercontent.com/dev-kraken/php-commitlint/main/docs/schema.json';
+    private const int MAX_CONFIG_FILE_SIZE = 100_000;
+    private const int JSON_ENCODE_FLAGS = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES;
+
+    /** @var array<string, mixed>|null */
     private static ?array $configCache = null;
 
+    /**
+     * @return array<string, mixed>
+     */
     public function loadConfig(): array
     {
-        // Return cached config if available
-        if (self::$configCache !== null) {
-            return self::$configCache;
-        }
-
-        $config = $this->loadConfigFromSources();
-
-        // Cache the validated config
-        self::$configCache = $config;
-
-        return $config;
+        return self::$configCache ??= $this->loadConfigFromSources();
     }
 
     public function clearCache(): void
     {
         self::$configCache = null;
-    }
-
-    private function loadConfigFromSources(): array
-    {
-        // Try to load from .commitlintrc.json first
-        if ($this->configExists()) {
-            try {
-                $content = $this->readFileSecurely($this->getConfigPath());
-                $config = $this->parseJson($content, $this->getConfigPath());
-
-                return $this->mergeConfig($this->getDefaultConfig(), $this->validateConfig($config));
-            } catch (\Throwable $e) {
-                throw new \RuntimeException('Failed to load configuration: ' . $e->getMessage(), 0, $e);
-            }
-        }
-
-        // Fallback to composer.json config
-        if (file_exists('composer.json')) {
-            try {
-                $content = $this->readFileSecurely('composer.json');
-                $composer = json_decode($content, true);
-                if (!is_array($composer)) {
-                    throw new \RuntimeException('Invalid composer.json format');
-                }
-
-                // Ensure 'extra' and 'php-commitlint' keys exist
-                if (!isset($composer['extra'])) {
-                    $composer['extra'] = [];
-                }
-                if (!isset($composer['extra'][self::COMPOSER_CONFIG_KEY])) {
-                    $composer['extra'][self::COMPOSER_CONFIG_KEY] = [];
-                }
-
-                return $this->mergeConfig($this->getDefaultConfig(), $this->validateConfig($composer['extra'][self::COMPOSER_CONFIG_KEY]));
-            } catch (\Throwable $e) {
-                throw new \RuntimeException('Failed to load configuration from composer.json: ' . $e->getMessage(), 0, $e);
-            }
-        }
-
-        return $this->getDefaultConfig();
-    }
-
-    private function readFileSecurely(string $filePath): string
-    {
-        // Validate file path to prevent directory traversal
-        $realPath = realpath($filePath);
-        if ($realPath === false) {
-            throw new \RuntimeException("File not found: {$filePath}");
-        }
-
-        $workingDir = getcwd();
-        if ($workingDir === false) {
-            throw new \RuntimeException("Failed to get working directory");
-        }
-
-        // Normalize paths for cross-platform compatibility
-        $normalizedRealPath = $this->normalizePath($realPath);
-        $normalizedWorkingDir = $this->normalizePath($workingDir);
-
-        // On Windows, also try normalizing the working directory with realpath for consistency
-        if (PHP_OS_FAMILY === 'Windows') {
-            $realWorkingDir = realpath($workingDir);
-            if ($realWorkingDir !== false) {
-                $normalizedWorkingDir = $this->normalizePath($realWorkingDir);
-            }
-        }
-
-        if (!str_starts_with($normalizedRealPath, $normalizedWorkingDir)) {
-            throw new \RuntimeException("Access denied");
-        }
-
-        // Check if file is readable before attempting to read it
-        if (!is_readable($realPath)) {
-            throw new \RuntimeException("Failed to read file");
-        }
-
-        $content = file_get_contents($realPath);
-        if ($content === false) {
-            throw new \RuntimeException("Failed to read file");
-        }
-
-        // Check file size (prevent DoS)
-        if (strlen($content) > 100000) { // 100KB limit
-            throw new \RuntimeException("Configuration file too large: {$filePath}");
-        }
-
-        return $content;
-    }
-
-    private function parseJson(string $content, string $filePath): array
-    {
-        $decoded = json_decode($content, true);
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            $relativePath = $this->getRelativePath($filePath);
-
-            throw new \RuntimeException("Invalid JSON in {$relativePath}: " . json_last_error_msg());
-        }
-
-        if (!is_array($decoded) || $this->isSequentialArray($decoded)) {
-            throw new \RuntimeException("Configuration must be a JSON object");
-        }
-
-        return $decoded;
-    }
-
-    private function getRelativePath(string $filePath): string
-    {
-        $workingDir = getcwd();
-        if ($workingDir !== false && str_starts_with($filePath, $workingDir)) {
-            return ltrim(substr($filePath, strlen($workingDir)), '/\\');
-        }
-
-        return basename($filePath);
-    }
-
-    private function normalizePath(string $path): string
-    {
-        // Convert backslashes to forward slashes
-        $normalized = str_replace('\\', '/', $path);
-
-        // Convert to lowercase on Windows for case-insensitive comparison
-        if (PHP_OS_FAMILY === 'Windows') {
-            $normalized = strtolower($normalized);
-
-            // Handle Windows short path names (8.3 format) by expanding them
-            if (str_contains($normalized, '~')) {
-                // Try to get the real path to expand short names
-                $realNormalized = realpath($path);
-                if ($realNormalized !== false) {
-                    $normalized = strtolower(str_replace('\\', '/', $realNormalized));
-                }
-            }
-        }
-
-        // Remove any trailing slashes for consistent comparison
-        return rtrim($normalized, '/');
     }
 
     public function configExists(): bool
@@ -179,21 +45,41 @@ class ConfigService
 
     public function createDefaultConfig(): void
     {
-        $config = $this->getDefaultConfig();
-
-        // Add schema reference for IDE support
-        $schemaUrl = 'https://raw.githubusercontent.com/dev-kraken/php-commitlint/main/docs/schema.json';
-        $config = ['$schema' => $schemaUrl] + $config;
-
-        // Ensure pre_commit_commands is encoded as an object, not array
-        if (isset($config['pre_commit_commands']) && empty($config['pre_commit_commands'])) {
-            $config['pre_commit_commands'] = new \stdClass();
-        }
-
-        $json = json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-        file_put_contents($this->getConfigPath(), $json);
+        $config = ['$schema' => self::SCHEMA_URL] + $this->getDefaultConfig();
+        $this->writeJsonFile($this->getConfigPath(), $this->prepareForEncoding($config));
     }
 
+    /**
+     * @param array<string, mixed> $config
+     */
+    public function saveConfig(array $config): void
+    {
+        $this->writeJsonFile($this->getConfigPath(), $this->prepareForEncoding($config));
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     */
+    public function updateComposerConfig(array $config): void
+    {
+        if (!file_exists(self::COMPOSER_FILE)) {
+            throw new RuntimeException('composer.json not found');
+        }
+
+        $composer = $this->decodeJsonObject($this->readFile(self::COMPOSER_FILE), self::COMPOSER_FILE);
+        $composer['extra'] ??= [];
+
+        if (!is_array($composer['extra'])) {
+            throw new RuntimeException('composer.json "extra" must be an object');
+        }
+
+        $composer['extra'][self::COMPOSER_CONFIG_KEY] = $config;
+        $this->writeJsonFile(self::COMPOSER_FILE, $composer);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
     public function getDefaultConfig(): array
     {
         return [
@@ -202,39 +88,29 @@ class ConfigService
                 'type' => [
                     'required' => true,
                     'allowed' => [
-                        'feat',     // New features
-                        'fix',      // Bug fixes
-                        'docs',     // Documentation changes
-                        'style',    // Code style changes (formatting, etc)
-                        'refactor', // Code refactoring
-                        'perf',     // Performance improvements
-                        'test',     // Adding or updating tests
-                        'chore',    // Maintenance tasks
-                        'ci',       // CI/CD changes
-                        'build',    // Build system changes
-                        'revert',   // Reverting previous commits
+                        'feat', 'fix', 'docs', 'style', 'refactor', 'perf',
+                        'test', 'chore', 'ci', 'build', 'revert',
                     ],
                 ],
                 'scope' => [
                     'required' => false,
-                    'allowed' => [], // Empty means any scope is allowed
+                    'allowed' => [],
                 ],
                 'subject' => [
                     'min_length' => 1,
                     'max_length' => 100,
-                    'case' => 'any', // 'lower', 'upper', 'any'
+                    'case' => 'any',
                     'end_with_period' => false,
                 ],
                 'body' => [
                     'max_line_length' => 100,
-                    'leading_blank' => true, // Require blank line between subject and body
+                    'leading_blank' => true,
                 ],
                 'footer' => [
-                    'leading_blank' => true, // Require blank line between body and footer
+                    'leading_blank' => true,
                 ],
             ],
             'patterns' => [
-                // Custom regex patterns for additional validation
                 'breaking_change' => '/^BREAKING CHANGE:/',
                 'issue_reference' => '/(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+/i',
             ],
@@ -243,12 +119,7 @@ class ConfigService
                 'pre-commit' => false,
                 'pre-push' => false,
             ],
-            'pre_commit_commands' => [
-                // Examples of pre-commit commands that run for all team members
-                // 'Code Style Check' => 'vendor/bin/php-cs-fixer fix --dry-run --diff',
-                // 'Static Analysis' => 'vendor/bin/phpstan analyse',
-                // 'Run Tests' => 'vendor/bin/pest',
-            ],
+            'pre_commit_commands' => [],
             'format' => [
                 'type' => true,
                 'scope' => 'optional',
@@ -259,61 +130,217 @@ class ConfigService
         ];
     }
 
-    public function saveConfig(array $config): void
+    /**
+     * @return array<string, mixed>
+     */
+    private function loadConfigFromSources(): array
     {
-        // Ensure pre_commit_commands is encoded as an object, not array
-        if (isset($config['pre_commit_commands']) && empty($config['pre_commit_commands'])) {
+        if ($this->configExists()) {
+            return $this->loadFromDedicatedConfig();
+        }
+
+        if (file_exists(self::COMPOSER_FILE)) {
+            return $this->loadFromComposerConfig();
+        }
+
+        return $this->getDefaultConfig();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function loadFromDedicatedConfig(): array
+    {
+        try {
+            $content = $this->readFileSecurely($this->getConfigPath());
+            $config = $this->decodeJsonObject($content, $this->getConfigPath());
+
+            return $this->mergeConfig($this->getDefaultConfig(), $this->validateConfig($config));
+        } catch (Throwable $e) {
+            throw new RuntimeException('Failed to load configuration: ' . $e->getMessage(), 0, $e);
+        }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function loadFromComposerConfig(): array
+    {
+        try {
+            $composer = $this->decodeJsonObject($this->readFile(self::COMPOSER_FILE), self::COMPOSER_FILE);
+            $extra = $this->asStringKeyedArray($composer['extra'] ?? null);
+            $custom = $this->asStringKeyedArray($extra[self::COMPOSER_CONFIG_KEY] ?? null);
+
+            return $this->mergeConfig($this->getDefaultConfig(), $this->validateConfig($custom));
+        } catch (Throwable $e) {
+            throw new RuntimeException(
+                'Failed to load configuration from composer.json: ' . $e->getMessage(),
+                0,
+                $e
+            );
+        }
+    }
+
+    private function readFile(string $filePath): string
+    {
+        $content = @file_get_contents($filePath);
+        if ($content === false) {
+            throw new RuntimeException("Failed to read file: {$filePath}");
+        }
+
+        return $content;
+    }
+
+    private function readFileSecurely(string $filePath): string
+    {
+        $realPath = realpath($filePath);
+        if ($realPath === false) {
+            throw new RuntimeException("File not found: {$filePath}");
+        }
+
+        $workingDir = getcwd();
+        if ($workingDir === false) {
+            throw new RuntimeException('Failed to get working directory');
+        }
+
+        if (!$this->isPathWithin($realPath, $workingDir)) {
+            throw new RuntimeException('Access denied');
+        }
+
+        if (!is_readable($realPath)) {
+            throw new RuntimeException('Failed to read file');
+        }
+
+        $content = file_get_contents($realPath);
+        if ($content === false) {
+            throw new RuntimeException('Failed to read file');
+        }
+
+        if (strlen($content) > self::MAX_CONFIG_FILE_SIZE) {
+            throw new RuntimeException("Configuration file too large: {$filePath}");
+        }
+
+        return $content;
+    }
+
+    private function isPathWithin(string $path, string $workingDir): bool
+    {
+        $normalizedPath = $this->normalizePath($path);
+        $normalizedDir = $this->normalizePath($workingDir);
+
+        if (PHP_OS_FAMILY === 'Windows') {
+            $resolvedDir = realpath($workingDir);
+            if ($resolvedDir !== false) {
+                $normalizedDir = $this->normalizePath($resolvedDir);
+            }
+        }
+
+        return str_starts_with($normalizedPath, $normalizedDir);
+    }
+
+    private function normalizePath(string $path): string
+    {
+        $normalized = str_replace('\\', '/', $path);
+
+        if (PHP_OS_FAMILY === 'Windows') {
+            $normalized = strtolower($normalized);
+
+            // Expand Windows 8.3 short path names
+            if (str_contains($normalized, '~')) {
+                $resolved = realpath($path);
+                if ($resolved !== false) {
+                    $normalized = strtolower(str_replace('\\', '/', $resolved));
+                }
+            }
+        }
+
+        return rtrim($normalized, '/');
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function decodeJsonObject(string $content, string $filePath): array
+    {
+        $decoded = json_decode($content, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new RuntimeException(sprintf(
+                'Invalid JSON in %s: %s',
+                $this->getRelativePath($filePath),
+                json_last_error_msg()
+            ));
+        }
+
+        if (!is_array($decoded) || array_is_list($decoded)) {
+            throw new RuntimeException('Configuration must be a JSON object');
+        }
+
+        /** @var array<string, mixed> $decoded */
+        return $decoded;
+    }
+
+    private function getRelativePath(string $filePath): string
+    {
+        $workingDir = getcwd();
+        if ($workingDir !== false && str_starts_with($filePath, $workingDir)) {
+            return ltrim(substr($filePath, strlen($workingDir)), '/\\');
+        }
+
+        return basename($filePath);
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private function writeJsonFile(string $filePath, array $data): void
+    {
+        $json = json_encode($data, self::JSON_ENCODE_FLAGS);
+        if ($json === false) {
+            throw new RuntimeException("Failed to encode JSON for: {$filePath}");
+        }
+
+        if (file_put_contents($filePath, $json) === false) {
+            throw new RuntimeException("Failed to write file: {$filePath}");
+        }
+    }
+
+    /**
+     * Ensure empty pre_commit_commands serialises as a JSON object rather than [].
+     *
+     * @param array<string, mixed> $config
+     * @return array<string, mixed>
+     */
+    private function prepareForEncoding(array $config): array
+    {
+        if (isset($config['pre_commit_commands']) && $config['pre_commit_commands'] === []) {
             $config['pre_commit_commands'] = new \stdClass();
         }
 
-        $json = json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-        file_put_contents($this->getConfigPath(), $json);
+        return $config;
     }
 
-    public function updateComposerConfig(array $config): void
-    {
-        if (!file_exists('composer.json')) {
-            throw new \RuntimeException('composer.json not found');
-        }
-
-        $content = file_get_contents('composer.json');
-        if ($content === false) {
-            throw new \RuntimeException('Failed to read composer.json');
-        }
-        $composer = json_decode($content, true);
-        if (!is_array($composer)) {
-            throw new \RuntimeException('Invalid composer.json format');
-        }
-
-        // Ensure 'extra' and 'php-commitlint' keys exist
-        if (!isset($composer['extra'])) {
-            $composer['extra'] = [];
-        }
-        if (!isset($composer['extra'][self::COMPOSER_CONFIG_KEY])) {
-            $composer['extra'][self::COMPOSER_CONFIG_KEY] = [];
-        }
-
-        $composer['extra'][self::COMPOSER_CONFIG_KEY] = $config;
-
-        $json = json_encode($composer, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-        file_put_contents('composer.json', $json);
-    }
-
+    /**
+     * @param array<string, mixed> $default
+     * @param array<string, mixed> $custom
+     * @return array<string, mixed>
+     */
     private function mergeConfig(array $default, array $custom): array
     {
         $result = $default;
 
         foreach ($custom as $key => $value) {
-            if (isset($result[$key]) && is_array($result[$key]) && is_array($value)) {
-                // For sequential arrays (like 'allowed'), override completely
-                if ($this->isSequentialArray($value) || $this->isSequentialArray($result[$key])) {
-                    $result[$key] = $value;
-                } else {
-                    // Only merge associative arrays
-                    $result[$key] = $this->mergeConfig($result[$key], $value);
-                }
+            if (
+                isset($result[$key])
+                && is_array($result[$key])
+                && is_array($value)
+                && !$this->isSequentialArray($value)
+                && !$this->isSequentialArray($result[$key])
+            ) {
+                /** @var array<string, mixed> $existing */
+                $existing = $result[$key];
+                /** @var array<string, mixed> $value */
+                $result[$key] = $this->mergeConfig($existing, $value);
             } else {
-                // Override completely for non-arrays and other cases
                 $result[$key] = $value;
             }
         }
@@ -321,38 +348,109 @@ class ConfigService
         return $result;
     }
 
+    /**
+     * @param array<mixed> $array
+     */
     private function isSequentialArray(array $array): bool
     {
-        if (empty($array)) {
-            return true;
-        }
-
-        return array_keys($array) === range(0, count($array) - 1);
+        return $array === [] || array_is_list($array);
     }
 
+    /**
+     * @param array<string, mixed> $config
+     * @return array<string, mixed>
+     */
     private function validateConfig(array $config): array
     {
-        // Basic validation of configuration structure
-        if (isset($config['rules']['type']['allowed']) && !is_array($config['rules']['type']['allowed'])) {
-            throw new \RuntimeException('Config rules.type.allowed must be an array');
+        $rules = $this->asStringKeyedArray($config['rules'] ?? null);
+        if ($rules === []) {
+            return $config;
         }
 
-        if (isset($config['rules']['scope']['allowed']) && !is_array($config['rules']['scope']['allowed'])) {
-            throw new \RuntimeException('Config rules.scope.allowed must be an array');
-        }
+        $this->assertArrayIfSet($rules, ['type', 'allowed'], 'Config rules.type.allowed must be an array');
+        $this->assertArrayIfSet($rules, ['scope', 'allowed'], 'Config rules.scope.allowed must be an array');
+        $this->assertNonNegativeIntIfSet(
+            $rules,
+            ['subject', 'min_length'],
+            'Config rules.subject.min_length must be a non-negative integer'
+        );
+        $this->assertPositiveIntIfSet(
+            $rules,
+            ['subject', 'max_length'],
+            'Config rules.subject.max_length must be a positive integer'
+        );
 
-        if (isset($config['rules']['subject']['min_length']) && (!is_int($config['rules']['subject']['min_length']) || $config['rules']['subject']['min_length'] < 0)) {
-            throw new \RuntimeException('Config rules.subject.min_length must be a non-negative integer');
-        }
-
-        if (isset($config['rules']['subject']['max_length']) && (!is_int($config['rules']['subject']['max_length']) || $config['rules']['subject']['max_length'] < 1)) {
-            throw new \RuntimeException('Config rules.subject.max_length must be a positive integer');
-        }
-
-        if (isset($config['rules']['subject']['case']) && !in_array($config['rules']['subject']['case'], ['lower', 'upper', 'any'])) {
-            throw new \RuntimeException('Config rules.subject.case must be one of: lower, upper, any');
+        $case = $this->nestedValue($rules, ['subject', 'case']);
+        if ($case !== null && !in_array($case, ['lower', 'upper', 'any'], true)) {
+            throw new RuntimeException('Config rules.subject.case must be one of: lower, upper, any');
         }
 
         return $config;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     * @param list<string> $path
+     */
+    private function assertArrayIfSet(array $data, array $path, string $message): void
+    {
+        $value = $this->nestedValue($data, $path);
+        if ($value !== null && !is_array($value)) {
+            throw new RuntimeException($message);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     * @param list<string> $path
+     */
+    private function assertNonNegativeIntIfSet(array $data, array $path, string $message): void
+    {
+        $value = $this->nestedValue($data, $path);
+        if ($value !== null && (!is_int($value) || $value < 0)) {
+            throw new RuntimeException($message);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     * @param list<string> $path
+     */
+    private function assertPositiveIntIfSet(array $data, array $path, string $message): void
+    {
+        $value = $this->nestedValue($data, $path);
+        if ($value !== null && (!is_int($value) || $value < 1)) {
+            throw new RuntimeException($message);
+        }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function asStringKeyedArray(mixed $value): array
+    {
+        if (!is_array($value)) {
+            return [];
+        }
+
+        /** @var array<string, mixed> $value */
+        return $value;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     * @param list<string> $path
+     */
+    private function nestedValue(array $data, array $path): mixed
+    {
+        $current = $data;
+        foreach ($path as $segment) {
+            if (!is_array($current) || !array_key_exists($segment, $current)) {
+                return null;
+            }
+            $current = $current[$segment];
+        }
+
+        return $current;
     }
 }

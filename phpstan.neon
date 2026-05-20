@@ -1,21 +1,52 @@
+includes:
+    - vendor/pestphp/pest/extension.neon
+    - vendor/pestphp/pest/phpstan-pest-extension.neon
+
 parameters:
     level: max
     paths:
         - src
         - tests
-    excludePaths:
-        # - tests/Pest.php
     ignoreErrors:
-        # Allow Pest test globals
-        - '#Function createConfig not found#'
-        - '#Undefined variable: \$this#'
-        # Allow custom Pest expectations
-        - '#Call to an undefined method Pest\\Expectation<.*>::toBeExitCode\(\)#'
-        - '#Call to an undefined method Pest\\Expectation<.*>::toBeValidCommitMessage\(\)#'
-        # Ignore missing Composer classes in dev mode
+        # Composer is dev-only; its types aren't loaded during static analysis
         - '#Parameter .* has invalid type Composer\\Script\\Event#'
         - '#Call to method getIO\(\) on an unknown class Composer\\Script\\Event#'
-        # Ignore missing generics and iterables for now
+        - identifier: missingType.iterableValue
+        # Symfony 6.4 / 7.0–7.3 compat shim: addCommand only exists on 7.4+
         -
-            identifier: missingType.iterableValue
+            message: '#method_exists\(\) with .* and ''addCommand'' will always evaluate to true#'
+            path: src/Application.php
+        # Pest's dynamic test context: $this->whatever resolves to mixed,
+        # so method calls, property accesses, casts, and concatenations on the
+        # result can't be statically typed. Restrict the relaxation to tests/.
+        -
+            message: '#Call to an undefined method Pest\\Expectation<.*>#'
+            path: tests/*
+        -
+            identifier: method.nonObject
+            path: tests/*
+        -
+            identifier: method.notFound
+            path: tests/*
+        -
+            identifier: property.notFound
+            path: tests/*
+        -
+            identifier: function.notFound
+            path: tests/*
+        -
+            identifier: function.alreadyNarrowedType
+            path: tests/*
+        -
+            identifier: argument.type
+            path: tests/*
+        -
+            identifier: binaryOp.invalid
+            path: tests/*
+        -
+            identifier: offsetAccess.nonOffsetAccessible
+            path: tests/*
+        -
+            message: '#Undefined variable: \$this#'
+            path: tests/*
     reportUnmatchedIgnoredErrors: false

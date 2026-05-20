@@ -15,11 +15,12 @@ use Symfony\Component\Console\Command\Command;
 
 final class Application extends SymfonyApplication
 {
-    private const string APP_NAME = 'PHP CommitLint';
-    private const string APP_VERSION = '1.1.0';
+    public const string APP_NAME = 'PHP CommitLint';
+    public const string APP_VERSION = '1.1.0';
+
     private const string DEFAULT_COMMAND = 'validate';
 
-    private ServiceContainer $container;
+    private readonly ServiceContainer $container;
 
     public function __construct(?ServiceContainer $container = null)
     {
@@ -46,37 +47,41 @@ final class Application extends SymfonyApplication
 
     private function registerCommands(): void
     {
-        $commands = [
-            InstallCommand::class,
-            UninstallCommand::class,
-            ValidateCommand::class,
-            AddCommand::class,
-            RemoveCommand::class,
-            ListCommand::class,
-        ];
-
-        foreach ($commands as $commandClass) {
-            $this->addCommandInstance($commandClass);
+        foreach ($this->createCommands() as $command) {
+            $this->registerCommand($command);
         }
     }
 
-    private function addCommandInstance(string $commandClass): void
+    /**
+     * Use Symfony 7.4+ addCommand() when available; fall back to add() for older versions.
+     */
+    private function registerCommand(Command $command): void
     {
-        /** @var Command $command */
-        $command = match ($commandClass) {
-            InstallCommand::class => new InstallCommand($this->container),
-            UninstallCommand::class => new UninstallCommand($this->container),
-            ValidateCommand::class => new ValidateCommand(
-                $this->container->getValidationService(),
-                $this->container->getConfigService(),
-                $this->container->getLoggerService()
-            ),
-            AddCommand::class => new AddCommand($this->container),
-            RemoveCommand::class => new RemoveCommand($this->container),
-            ListCommand::class => new ListCommand($this->container),
-            default => throw new \InvalidArgumentException("Unknown command class: {$commandClass}")
-        };
+        if (method_exists($this, 'addCommand')) {
+            $this->addCommand($command);
+
+            return;
+        }
 
         $this->add($command);
+    }
+
+    /**
+     * @return list<Command>
+     */
+    private function createCommands(): array
+    {
+        return [
+            new InstallCommand($this->container),
+            new UninstallCommand($this->container),
+            new ValidateCommand(
+                $this->container->getValidationService(),
+                $this->container->getConfigService(),
+                $this->container->getLoggerService(),
+            ),
+            new AddCommand($this->container),
+            new RemoveCommand($this->container),
+            new ListCommand($this->container),
+        ];
     }
 }

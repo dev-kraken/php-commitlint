@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace DevKraken\PhpCommitlint\Commands;
 
+use DevKraken\PhpCommitlint\Commands\Concerns\RequiresGitRepository;
 use DevKraken\PhpCommitlint\Enums\ExitCode;
 use DevKraken\PhpCommitlint\ServiceContainer;
 use DevKraken\PhpCommitlint\Services\HookService;
 use DevKraken\PhpCommitlint\Services\LoggerService;
 use InvalidArgumentException;
+use RuntimeException;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
@@ -24,6 +26,11 @@ use Throwable;
 )]
 final class RemoveCommand extends Command
 {
+    use RequiresGitRepository;
+
+    private const string HOOKS_DIR = '.git/hooks';
+    private const string HOOK_NAME_PATTERN = '/^[a-z-]+$/';
+
     private readonly HookService $hookService;
     private readonly LoggerService $logger;
 
@@ -36,25 +43,15 @@ final class RemoveCommand extends Command
 
     protected function configure(): void
     {
-        $this->addArgument(
-            'hook',
-            InputArgument::REQUIRED,
-            'Git hook name to remove'
-        );
-
-        $this->addOption(
-            'force',
-            'f',
-            InputOption::VALUE_NONE,
-            'Force removal without confirmation'
-        );
+        $this
+            ->addArgument('hook', InputArgument::REQUIRED, 'Git hook name to remove')
+            ->addOption('force', 'f', InputOption::VALUE_NONE, 'Force removal without confirmation');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $io = new SymfonyStyle($input, $output);
         $hookName = $input->getArgument('hook');
-
         if (!is_string($hookName)) {
             throw new InvalidArgumentException('Hook name must be a string');
         }
@@ -63,8 +60,8 @@ final class RemoveCommand extends Command
         $io->title('➖ Removing Custom Git Hook');
 
         try {
-            $this->validateGitRepository($io);
-            $this->validateHookName($hookName);
+            $this->assertGitRepository($this->hookService);
+            $this->assertValidHookName($hookName);
             $this->confirmRemoval($io, $hookName, $force);
             $this->removeHook($io, $hookName);
 
@@ -76,41 +73,33 @@ final class RemoveCommand extends Command
                 'hook' => $hookName,
                 'error' => $e->getMessage(),
             ]);
-
             $io->error('❌ Failed to remove hook: ' . $e->getMessage());
 
             return ExitCode::RUNTIME_ERROR->value;
         }
     }
 
-    private function validateGitRepository(SymfonyStyle $io): void
-    {
-        if (!$this->hookService->isGitRepository()) {
-            throw new \RuntimeException('Not a Git repository!');
-        }
-    }
-
-    private function validateHookName(string $hookName): void
+    private function assertValidHookName(string $hookName): void
     {
         if (trim($hookName) === '') {
             throw new InvalidArgumentException('Hook name cannot be empty');
         }
 
-        if (!preg_match('/^[a-z-]+$/', $hookName)) {
+        if (!preg_match(self::HOOK_NAME_PATTERN, $hookName)) {
             throw new InvalidArgumentException('Hook name must contain only lowercase letters and hyphens');
         }
     }
 
     private function confirmRemoval(SymfonyStyle $io, string $hookName, bool $force): void
     {
-        $hookPath = '.git/hooks/' . $hookName;
+        $hookPath = self::HOOKS_DIR . '/' . $hookName;
 
         if (!file_exists($hookPath)) {
-            throw new \RuntimeException(sprintf('Hook "%s" does not exist', $hookName));
+            throw new RuntimeException(sprintf('Hook "%s" does not exist', $hookName));
         }
 
         if (!$force && !$io->confirm(sprintf('Are you sure you want to remove hook "%s"?', $hookName), false)) {
-            throw new \RuntimeException('Operation cancelled by user');
+            throw new RuntimeException('Operation cancelled by user');
         }
     }
 

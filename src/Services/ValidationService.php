@@ -10,22 +10,30 @@ use Throwable;
 
 class ValidationService
 {
-    private const int MAX_MESSAGE_LENGTH = 10000;
+    private const int MAX_MESSAGE_LENGTH = 10_000;
+    private const int DEFAULT_SUBJECT_MIN_LENGTH = 1;
+    private const int DEFAULT_SUBJECT_MAX_LENGTH = 100;
+    private const int DEFAULT_BODY_MAX_LINE_LENGTH = 100;
 
+    /**
+     * @param array<string, mixed> $config
+     */
     public function validate(string $message, array $config): ValidationResult
     {
-        if (empty(trim($message))) {
+        if (trim($message) === '') {
             return ValidationResult::error('Commit message cannot be empty');
         }
 
         if (strlen($message) > self::MAX_MESSAGE_LENGTH) {
-            return ValidationResult::error('Commit message too long (max ' . number_format(self::MAX_MESSAGE_LENGTH) . ' characters)');
+            return ValidationResult::error(sprintf(
+                'Commit message too long (max %s characters)',
+                number_format(self::MAX_MESSAGE_LENGTH)
+            ));
         }
 
         try {
             $commitMessage = CommitMessage::fromString($message);
 
-            // Skip validation for special commits
             if ($commitMessage->shouldSkipValidation()) {
                 return ValidationResult::valid($commitMessage->getType(), $commitMessage->getScope());
             }
@@ -36,35 +44,37 @@ class ValidationService
         }
     }
 
+    /**
+     * @param array<string, mixed> $config
+     */
     private function validateCommitMessage(CommitMessage $commitMessage, array $config): ValidationResult
     {
-        $errors = [];
+        $errors = [
+            ...$this->validateFormat($commitMessage, $config),
+            ...$this->validateType($commitMessage, $config),
+            ...$this->validateScope($commitMessage, $config),
+            ...$this->validateSubject($commitMessage, $config),
+            ...$this->validateBody($commitMessage, $config),
+            ...$this->validateFooter($commitMessage, $config),
+        ];
 
-        $errors = array_merge($errors, $this->validateFormat($commitMessage, $config));
-        $errors = array_merge($errors, $this->validateType($commitMessage, $config));
-        $errors = array_merge($errors, $this->validateScope($commitMessage, $config));
-        $errors = array_merge($errors, $this->validateSubject($commitMessage, $config));
-        $errors = array_merge($errors, $this->validateBody($commitMessage, $config));
-        $errors = array_merge($errors, $this->validateFooter($commitMessage, $config));
-        $errors = array_merge($errors, $this->validatePatterns($commitMessage, $config));
-
-        return empty($errors)
+        return $errors === []
             ? ValidationResult::valid($commitMessage->getType(), $commitMessage->getScope())
             : ValidationResult::invalid($errors, $commitMessage->getType(), $commitMessage->getScope());
     }
 
     /**
+     * @param array<string, mixed> $config
      * @return list<string>
      */
     private function validateFormat(CommitMessage $commitMessage, array $config): array
     {
-        // Check if format validation is enabled (default: true)
-        $formatConfig = $config['format'] ?? [];
+        $formatConfig = $this->arrayValue($config, 'format');
+
         if (isset($formatConfig['enabled']) && !$formatConfig['enabled']) {
             return [];
         }
 
-        // Check if conventional format is required (default: true)
         if (!($formatConfig['conventional'] ?? true)) {
             return [];
         }
@@ -77,23 +87,24 @@ class ValidationService
     }
 
     /**
+     * @param array<string, mixed> $config
      * @return list<string>
      */
     private function validateType(CommitMessage $commitMessage, array $config): array
     {
-        $typeConfig = $config['rules']['type'] ?? [];
-        $type = $commitMessage->getType();
+        $typeConfig = $this->arrayValue($config, 'rules', 'type');
 
         if (!($typeConfig['required'] ?? true)) {
             return [];
         }
 
-        if (empty($type)) {
+        $type = $commitMessage->getType();
+        if ($type === null || $type === '') {
             return ['Commit type is required'];
         }
 
-        $allowedTypes = $typeConfig['allowed'] ?? [];
-        if (!empty($allowedTypes) && !in_array($type, $allowedTypes, true)) {
+        $allowedTypes = $this->stringListOption($typeConfig, 'allowed');
+        if ($allowedTypes !== [] && !in_array($type, $allowedTypes, true)) {
             return [sprintf(
                 'Invalid commit type "%s". Allowed types: %s',
                 $type,
@@ -105,111 +116,113 @@ class ValidationService
     }
 
     /**
+     * @param array<string, mixed> $config
      * @return list<string>
      */
     private function validateScope(CommitMessage $commitMessage, array $config): array
     {
-        $scopeConfig = $config['rules']['scope'] ?? [];
+        $scopeConfig = $this->arrayValue($config, 'rules', 'scope');
         $scope = $commitMessage->getScope();
 
-        if (($scopeConfig['required'] ?? false) && empty($scope)) {
+        if (($scopeConfig['required'] ?? false) && ($scope === null || $scope === '')) {
             return ['Commit scope is required'];
         }
 
-        if (!empty($scope)) {
-            $allowedScopes = $scopeConfig['allowed'] ?? [];
-            if (!empty($allowedScopes) && !in_array($scope, $allowedScopes, true)) {
-                return [sprintf(
-                    'Invalid commit scope "%s". Allowed scopes: %s',
-                    $scope,
-                    implode(', ', $allowedScopes)
-                )];
-            }
+        if ($scope === null || $scope === '') {
+            return [];
+        }
+
+        $allowedScopes = $this->stringListOption($scopeConfig, 'allowed');
+        if ($allowedScopes !== [] && !in_array($scope, $allowedScopes, true)) {
+            return [sprintf(
+                'Invalid commit scope "%s". Allowed scopes: %s',
+                $scope,
+                implode(', ', $allowedScopes)
+            )];
         }
 
         return [];
     }
 
     /**
+     * @param array<string, mixed> $config
      * @return list<string>
      */
     private function validateSubject(CommitMessage $commitMessage, array $config): array
     {
-        $subjectConfig = $config['rules']['subject'] ?? [];
+        $subjectConfig = $this->arrayValue($config, 'rules', 'subject');
         $subject = $commitMessage->getSubject();
-        $errors = [];
 
-        if (empty($subject)) {
+        if ($subject === null || $subject === '') {
             return ['Commit subject is required'];
         }
 
-        $minLength = $subjectConfig['min_length'] ?? 1;
-        $maxLength = $subjectConfig['max_length'] ?? 100;
-        $subjectLength = $commitMessage->getSubjectLength();
+        $errors = [];
+        $length = $commitMessage->getSubjectLength();
+        $minLength = $this->intOption($subjectConfig, 'min_length', self::DEFAULT_SUBJECT_MIN_LENGTH);
+        $maxLength = $this->intOption($subjectConfig, 'max_length', self::DEFAULT_SUBJECT_MAX_LENGTH);
 
-        if ($subjectLength < $minLength) {
+        if ($length < $minLength) {
             $errors[] = sprintf('Subject too short (minimum %d characters)', $minLength);
         }
 
-        if ($subjectLength > $maxLength) {
+        if ($length > $maxLength) {
             $errors[] = sprintf('Subject too long (maximum %d characters)', $maxLength);
         }
 
-        $case = $subjectConfig['case'] ?? 'any';
-        if ($case !== 'any') {
-            $errors = array_merge($errors, $this->validateSubjectCase($subject, $case));
+        $case = $this->stringOption($subjectConfig, 'case', 'any');
+        if ($case !== 'any' && ($caseError = $this->validateSubjectCase($subject, $case)) !== null) {
+            $errors[] = $caseError;
         }
 
-        if ($subjectConfig['end_with_period'] ?? false) {
-            if (!str_ends_with($subject, '.')) {
-                $errors[] = 'Subject must end with a period';
-            }
-        } else {
-            if (str_ends_with($subject, '.')) {
-                $errors[] = 'Subject must not end with a period';
-            }
+        $shouldEndWithPeriod = (bool) ($subjectConfig['end_with_period'] ?? false);
+        $endsWithPeriod = str_ends_with($subject, '.');
+
+        if ($shouldEndWithPeriod && !$endsWithPeriod) {
+            $errors[] = 'Subject must end with a period';
+        } elseif (!$shouldEndWithPeriod && $endsWithPeriod) {
+            $errors[] = 'Subject must not end with a period';
         }
 
         return $errors;
     }
 
-    /**
-     * @return list<string>
-     */
-    private function validateSubjectCase(string $subject, string $expectedCase): array
+    private function validateSubjectCase(string $subject, string $expectedCase): ?string
     {
         return match ($expectedCase) {
-            'lower' => ctype_lower($subject[0]) ? [] : ['Subject must start with lowercase letter'],
-            'upper' => ctype_upper($subject[0]) ? [] : ['Subject must start with uppercase letter'],
-            default => []
+            'lower' => ctype_lower($subject[0]) ? null : 'Subject must start with lowercase letter',
+            'upper' => ctype_upper($subject[0]) ? null : 'Subject must start with uppercase letter',
+            default => null,
         };
     }
 
     /**
+     * @param array<string, mixed> $config
      * @return list<string>
      */
     private function validateBody(CommitMessage $commitMessage, array $config): array
     {
-        $bodyConfig = $config['rules']['body'] ?? [];
         $body = $commitMessage->getBody();
-        $errors = [];
-
-        if (empty($body)) {
+        if ($body === null || $body === '') {
             return [];
         }
 
-        if ($bodyConfig['leading_blank'] ?? true) {
-            if (!$commitMessage->hasBlankLineAfterSubject()) {
-                $errors[] = 'Body must be separated from subject by a blank line';
-            }
+        $bodyConfig = $this->arrayValue($config, 'rules', 'body');
+        $errors = [];
+
+        if (($bodyConfig['leading_blank'] ?? true) && !$commitMessage->hasBlankLineAfterSubject()) {
+            $errors[] = 'Body must be separated from subject by a blank line';
         }
 
-        $maxLineLength = $bodyConfig['max_line_length'] ?? 100;
+        $maxLineLength = $this->intOption($bodyConfig, 'max_line_length', self::DEFAULT_BODY_MAX_LINE_LENGTH);
         if ($maxLineLength > 0) {
-            $bodyLines = explode("\n", $body);
-            foreach ($bodyLines as $lineNumber => $line) {
+            foreach (explode("\n", $body) as $lineNumber => $line) {
                 if (mb_strlen($line) > $maxLineLength) {
-                    $errors[] = sprintf('Body line %d exceeds maximum length of %d characters', $lineNumber + 1, $maxLineLength);
+                    $errors[] = sprintf(
+                        'Body line %d exceeds maximum length of %d characters',
+                        $lineNumber + 1,
+                        $maxLineLength
+                    );
                 }
             }
         }
@@ -218,54 +231,75 @@ class ValidationService
     }
 
     /**
+     * @param array<string, mixed> $config
      * @return list<string>
      */
     private function validateFooter(CommitMessage $commitMessage, array $config): array
     {
-        $footerConfig = $config['rules']['footer'] ?? [];
         $footer = $commitMessage->getFooter();
-
-        if (empty($footer)) {
+        if ($footer === null || $footer === '') {
             return [];
         }
 
-        if ($footerConfig['leading_blank'] ?? true) {
-            if (!$commitMessage->hasBlankLineBeforeFooter()) {
-                return ['Footer must be separated from body by a blank line'];
-            }
+        $footerConfig = $this->arrayValue($config, 'rules', 'footer');
+
+        if (($footerConfig['leading_blank'] ?? true) && !$commitMessage->hasBlankLineBeforeFooter()) {
+            return ['Footer must be separated from body by a blank line'];
         }
 
         return [];
     }
 
     /**
+     * @param array<string, mixed> $config
+     */
+    private function intOption(array $config, string $key, int $default): int
+    {
+        $value = $config[$key] ?? null;
+
+        return is_int($value) ? $value : $default;
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     */
+    private function stringOption(array $config, string $key, string $default): string
+    {
+        $value = $config[$key] ?? null;
+
+        return is_string($value) ? $value : $default;
+    }
+
+    /**
+     * @param array<string, mixed> $config
      * @return list<string>
      */
-    private function validatePatterns(CommitMessage $commitMessage, array $config): array
+    private function stringListOption(array $config, string $key): array
     {
-        $patterns = $config['patterns'] ?? [];
-        $errors = [];
-        $message = $commitMessage->getRawMessage();
-
-        // Patterns are optional by default - they don't generate errors if they don't match
-        // This method is kept for potential future use with required patterns
-        return $errors;
-
-        // Legacy code kept for reference (commented out):
-        /*
-        foreach ($patterns as $name => $pattern) {
-            if (!is_string($pattern)) {
-                continue;
-            }
-
-            try {
-                if (!preg_match($pattern, $message)) {
-                    $errors[] = sprintf('Message does not match required pattern: %s', $name);
-                }
-            } catch (Throwable $e) {
-                $errors[] = sprintf('Invalid pattern "%s": %s', $name, $e->getMessage());
-            }
+        $value = $config[$key] ?? null;
+        if (!is_array($value)) {
+            return [];
         }
-        */
+
+        return array_values(array_filter($value, 'is_string'));
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     * @return array<string, mixed>
+     */
+    private function arrayValue(array $config, string ...$keys): array
+    {
+        $current = $config;
+        foreach ($keys as $key) {
+            if (!array_key_exists($key, $current) || !is_array($current[$key])) {
+                return [];
+            }
+            /** @var array<string, mixed> $current */
+            $current = $current[$key];
+        }
+
+        /** @var array<string, mixed> $current */
+        return $current;
     }
 }

@@ -4,25 +4,31 @@ declare(strict_types=1);
 
 namespace DevKraken\PhpCommitlint\Services;
 
+use DevKraken\PhpCommitlint\Contracts\HookServiceInterface;
+use InvalidArgumentException;
 use RuntimeException;
 
-class HookService
+final class HookService implements HookServiceInterface
 {
     private const string HOOK_MARKER = '# PHP CommitLint Hook';
     private const string HOOKS_DIR = '.git/hooks';
+    private const string GIT_DIR = '.git';
+    private const int FILE_MODE = 0o755;
+    private const int MAX_COMMAND_LENGTH = 1000;
+    private const string HOOK_NAME_PATTERN = '/^[a-z-]+$/';
+
+    /** @var list<string> */
+    private const array MANAGED_HOOKS = ['commit-msg', 'pre-commit', 'pre-push'];
 
     public function isGitRepository(): bool
     {
-        return is_dir('.git') || (file_exists('.git') && is_file('.git'));
+        return is_dir(self::GIT_DIR) || is_file(self::GIT_DIR);
     }
 
     public function hasExistingHooks(): bool
     {
-        $hookFiles = ['commit-msg', 'pre-commit', 'pre-push'];
-
-        foreach ($hookFiles as $hook) {
-            $hookPath = self::HOOKS_DIR . '/' . $hook;
-            if (file_exists($hookPath)) {
+        foreach (self::MANAGED_HOOKS as $hook) {
+            if (file_exists($this->hookPath($hook))) {
                 return true;
             }
         }
@@ -32,15 +38,9 @@ class HookService
 
     public function hasInstalledHooks(): bool
     {
-        $hookFiles = ['commit-msg', 'pre-commit', 'pre-push'];
-
-        foreach ($hookFiles as $hook) {
-            $hookPath = self::HOOKS_DIR . '/' . $hook;
-            if (file_exists($hookPath)) {
-                $content = file_get_contents($hookPath);
-                if ($content !== false && str_contains($content, self::HOOK_MARKER)) {
-                    return true;
-                }
+        foreach (self::MANAGED_HOOKS as $hook) {
+            if ($this->isOwnedHook($this->hookPath($hook))) {
+                return true;
             }
         }
 
@@ -50,46 +50,31 @@ class HookService
     public function installHooks(): void
     {
         $this->ensureHooksDirectory();
-
-        // Install commit-msg hook (main functionality)
-        $this->installCommitMsgHook();
-
-        // Install pre-commit hook (optional, for additional checks)
-        $this->installPreCommitHook();
+        $this->writeHookFile($this->hookPath('commit-msg'), $this->createCommitMsgHookContent());
+        $this->writeHookFile($this->hookPath('pre-commit'), $this->createPreCommitHookContent());
     }
 
     public function uninstallHooks(): void
     {
-        $hookFiles = ['commit-msg', 'pre-commit', 'pre-push'];
-
-        foreach ($hookFiles as $hook) {
-            $hookPath = self::HOOKS_DIR . '/' . $hook;
-            if (file_exists($hookPath)) {
-                $content = file_get_contents($hookPath);
-                if ($content !== false && str_contains($content, self::HOOK_MARKER)) {
-                    unlink($hookPath);
-                }
+        foreach (self::MANAGED_HOOKS as $hook) {
+            $path = $this->hookPath($hook);
+            if ($this->isOwnedHook($path)) {
+                @unlink($path);
             }
         }
     }
 
+    /**
+     * @return array<string, array{installed: bool, path: string}>
+     */
     public function getInstalledHooks(): array
     {
         $hooks = [];
-        $hookFiles = ['commit-msg', 'pre-commit', 'pre-push'];
-
-        foreach ($hookFiles as $hook) {
-            $hookPath = self::HOOKS_DIR . '/' . $hook;
-            $installed = false;
-
-            if (file_exists($hookPath)) {
-                $content = file_get_contents($hookPath);
-                $installed = $content !== false && str_contains($content, self::HOOK_MARKER);
-            }
-
+        foreach (self::MANAGED_HOOKS as $hook) {
+            $path = $this->hookPath($hook);
             $hooks[$hook] = [
-                'installed' => $installed,
-                'path' => $hookPath,
+                'installed' => $this->isOwnedHook($path),
+                'path' => $path,
             ];
         }
 
@@ -98,95 +83,54 @@ class HookService
 
     public function addCustomHook(string $hookName, string $command): void
     {
-        // Validate hook name to prevent path traversal
-        if (!preg_match('/^[a-z-]+$/', $hookName)) {
-            throw new \InvalidArgumentException('Invalid hook name. Only lowercase letters and hyphens allowed.');
-        }
+        $this->assertValidHookName($hookName);
+        $this->assertValidCommand($command);
 
-        // Validate command to prevent command injection
-        if (strlen($command) > 1000) {
-            throw new \InvalidArgumentException('Command too long. Maximum 1000 characters allowed.');
-        }
+        $hookPath = $this->hookPath($hookName);
+        $content = $this->prepareHookForCustomCommand($hookPath, $hookName);
+        $escapedCommand = escapeshellarg($this->sanitizeCommand($command));
+        $marker = sprintf("\n# Custom command - Added %s\n%s\n", date('Y-m-d H:i:s'), $escapedCommand);
 
-        $sanitizedCommand = !empty($command) ? $command : null; // Ensure $sanitizedCommand is a string
-
-        // Sanitize command for security by removing dangerous patterns entirely
-        $sanitizedCommand = preg_replace('/rm\s+-rf\s*\/[^"\';\s]*/', '', $sanitizedCommand ?? '');
-        $sanitizedCommand = preg_replace('/rm\s+-rf\s*\//', '', $sanitizedCommand ?? '');
-
-        // Clean up any resulting extra spaces or semicolons
-        $sanitizedCommand = preg_replace('/\s+/', ' ', $sanitizedCommand ?? '');
-        $sanitizedCommand = preg_replace('/;\s*;/', ';', $sanitizedCommand ?? '');
-        $sanitizedCommand = trim($sanitizedCommand ?? '', '; ');
-
-        // Escape the sanitized command for shell safety
-        $escapedCommand = escapeshellarg($sanitizedCommand);
-
-        $hookPath = self::HOOKS_DIR . '/' . $hookName;
-
-        if (file_exists($hookPath)) {
-            // Read existing hook
-            $content = file_get_contents($hookPath);
-            if ($content === false) {
-                throw new RuntimeException("Failed to read existing hook: {$hookPath}");
-            }
-
-            if (!str_contains($content, self::HOOK_MARKER)) {
-                // Not our hook, create backup
-                $backupPath = $hookPath . '.backup.' . time();
-                if (!rename($hookPath, $backupPath)) {
-                    throw new RuntimeException("Failed to create backup: {$backupPath}");
-                }
-                $content = $this->createHookTemplate($hookName);
-            }
-        } else {
-            $content = $this->createHookTemplate($hookName);
-        }
-
-        // Insert custom command before any exit statements
-        $customCommand = sprintf("\n# Custom command - Added %s\n%s\n", date('Y-m-d H:i:s'), $escapedCommand);
-
-        // Find the last exit statement and insert before it
-        if (preg_match('/(\n.*exit\s+\d+\s*(?:#.*)?)\s*$/s', $content, $matches)) {
-            // Insert before the exit statement
-            $content = str_replace($matches[1], $customCommand . $matches[1], $content);
-        } else {
-            // No exit statement found, append to end
-            $content .= $customCommand;
-        }
-
-        if (file_put_contents($hookPath, $content) === false) {
-            throw new RuntimeException("Failed to write hook file: {$hookPath}");
-        }
-
-        if (!chmod($hookPath, 0o755)) {
-            throw new RuntimeException("Failed to make hook executable: {$hookPath}");
-        }
+        $content = $this->insertBeforeExit($content, $marker);
+        $this->writeHookFile($hookPath, $content);
     }
 
     public function removeCustomHook(string $hookName): void
     {
-        $hookPath = self::HOOKS_DIR . '/' . $hookName;
-
-        if (file_exists($hookPath)) {
-            $content = file_get_contents($hookPath);
-            if ($content !== false && str_contains($content, self::HOOK_MARKER)) {
-                // Check if backup exists
-                $backupPath = $hookPath . '.backup';
-                if (file_exists($backupPath)) {
-                    // Restore backup
-                    rename($backupPath, $hookPath);
-                } else {
-                    // Remove our hook
-                    unlink($hookPath);
-                }
-            }
+        $hookPath = $this->hookPath($hookName);
+        if (!$this->isOwnedHook($hookPath)) {
+            return;
         }
+
+        $backupPath = $hookPath . '.backup';
+        if (file_exists($backupPath)) {
+            rename($backupPath, $hookPath);
+
+            return;
+        }
+
+        @unlink($hookPath);
+    }
+
+    private function hookPath(string $hookName): string
+    {
+        return self::HOOKS_DIR . '/' . $hookName;
+    }
+
+    private function isOwnedHook(string $path): bool
+    {
+        if (!file_exists($path)) {
+            return false;
+        }
+
+        $content = @file_get_contents($path);
+
+        return $content !== false && str_contains($content, self::HOOK_MARKER);
     }
 
     private function ensureHooksDirectory(): void
     {
-        if (!is_dir(self::HOOKS_DIR) && !mkdir($concurrentDirectory = self::HOOKS_DIR, 0o755, true) && !is_dir($concurrentDirectory)) {
+        if (!is_dir(self::HOOKS_DIR) && !mkdir(self::HOOKS_DIR, self::FILE_MODE, true) && !is_dir(self::HOOKS_DIR)) {
             throw new RuntimeException('Failed to create hooks directory: ' . self::HOOKS_DIR);
         }
 
@@ -195,32 +139,81 @@ class HookService
         }
     }
 
-    private function installCommitMsgHook(): void
+    private function writeHookFile(string $path, string $content): void
     {
-        $hookPath = self::HOOKS_DIR . '/commit-msg';
-        $content = $this->createCommitMsgHookContent();
-
-        if (file_put_contents($hookPath, $content) === false) {
-            throw new RuntimeException("Failed to create commit-msg hook: {$hookPath}");
+        if (file_put_contents($path, $content) === false) {
+            throw new RuntimeException("Failed to write hook file: {$path}");
         }
 
-        if (!chmod($hookPath, 0o755)) {
-            throw new RuntimeException("Failed to make commit-msg hook executable: {$hookPath}");
+        if (!chmod($path, self::FILE_MODE)) {
+            throw new RuntimeException("Failed to make hook executable: {$path}");
         }
     }
 
-    private function installPreCommitHook(): void
+    private function assertValidHookName(string $hookName): void
     {
-        $hookPath = self::HOOKS_DIR . '/pre-commit';
-        $content = $this->createPreCommitHookContent();
+        if (!preg_match(self::HOOK_NAME_PATTERN, $hookName)) {
+            throw new InvalidArgumentException('Invalid hook name. Only lowercase letters and hyphens allowed.');
+        }
+    }
 
-        if (file_put_contents($hookPath, $content) === false) {
-            throw new RuntimeException("Failed to create pre-commit hook: {$hookPath}");
+    private function assertValidCommand(string $command): void
+    {
+        if (strlen($command) > self::MAX_COMMAND_LENGTH) {
+            throw new InvalidArgumentException(sprintf(
+                'Command too long. Maximum %d characters allowed.',
+                self::MAX_COMMAND_LENGTH
+            ));
+        }
+    }
+
+    private function prepareHookForCustomCommand(string $hookPath, string $hookName): string
+    {
+        if (!file_exists($hookPath)) {
+            return $this->createHookTemplate($hookName);
         }
 
-        if (!chmod($hookPath, 0o755)) {
-            throw new RuntimeException("Failed to make pre-commit hook executable: {$hookPath}");
+        $content = file_get_contents($hookPath);
+        if ($content === false) {
+            throw new RuntimeException("Failed to read existing hook: {$hookPath}");
         }
+
+        if (str_contains($content, self::HOOK_MARKER)) {
+            return $content;
+        }
+
+        $backupPath = $hookPath . '.backup.' . time();
+        if (!rename($hookPath, $backupPath)) {
+            throw new RuntimeException("Failed to create backup: {$backupPath}");
+        }
+
+        return $this->createHookTemplate($hookName);
+    }
+
+    /**
+     * Strip known-dangerous patterns; final defence is escapeshellarg in the caller.
+     */
+    private function sanitizeCommand(string $command): string
+    {
+        $cleaned = preg_replace(
+            ['#rm\s+-rf\s*/[^"\';\s]*#', '#rm\s+-rf\s*/#'],
+            '',
+            $command
+        ) ?? '';
+
+        $cleaned = preg_replace('/\s+/', ' ', $cleaned) ?? '';
+        $cleaned = preg_replace('/;\s*;/', ';', $cleaned) ?? '';
+
+        return trim($cleaned, '; ');
+    }
+
+    private function insertBeforeExit(string $content, string $insertion): string
+    {
+        if (preg_match('/(\n.*exit\s+\d+\s*(?:#.*)?)\s*$/s', $content, $matches)) {
+            return str_replace($matches[1], $insertion . $matches[1], $content);
+        }
+
+        return $content . $insertion;
     }
 
     private function createCommitMsgHookContent(): string
@@ -237,22 +230,17 @@ class HookService
             # This hook validates commit messages according to configured rules
             #
 
-            # Check if PHP CommitLint is available
             if [ ! -f "{$commitlintBinary}" ]; then
                 echo "⚠️  PHP CommitLint not found. Skipping validation."
                 exit 0
             fi
 
-            # Check if we're in a rebase/merge/cherry-pick
             if [ -f ".git/MERGE_HEAD" ] || [ -f ".git/REBASE_HEAD" ] || [ -f ".git/CHERRY_PICK_HEAD" ]; then
                 echo "🔄 In rebase/merge/cherry-pick mode. Skipping validation."
                 exit 0
             fi
 
-            # Validate commit message
             "{$phpBinary}" "{$commitlintBinary}" validate --file="\$1"
-
-            # Exit with the same code as the validation
             exit \$?
             HOOK;
     }
@@ -261,19 +249,16 @@ class HookService
     {
         $marker = self::HOOK_MARKER;
         $phpBinary = $this->findPhpBinary();
-        $commitlintBinary = $this->findCommitlintBinary();
 
         return <<<HOOK
             #!/bin/sh
             # {$marker}
             #
             # Git pre-commit hook for PHP CommitLint
-            # This hook dynamically reads pre-commit commands from configuration
+            # Reads pre_commit_commands from .commitlintrc.json and runs each in order.
             #
 
-            # Function to run pre-commit commands from config
             run_pre_commit_commands() {
-                # Use PHP to read and execute pre-commit commands from config
                 "{$phpBinary}" -r '
                 \$configFile = ".commitlintrc.json";
                 if (!file_exists(\$configFile)) {
@@ -293,18 +278,17 @@ class HookService
                     exit(0);
                 }
 
-                // Handle both object and array formats
                 if (is_object(\$commands)) {
                     \$commands = (array) \$commands;
                 }
 
                 foreach (\$commands as \$description => \$command) {
                     if (!is_string(\$command)) continue;
-                    
+
                     echo "🔍 " . \$description . "..." . PHP_EOL;
                     \$exitCode = 0;
                     system(\$command, \$exitCode);
-                    
+
                     if (\$exitCode !== 0) {
                         echo "❌ " . \$description . " failed!" . PHP_EOL;
                         exit(1);
@@ -315,7 +299,6 @@ class HookService
                 '
             }
 
-            # Run pre-commit commands
             run_pre_commit_commands
 
             exit 0
@@ -338,20 +321,34 @@ class HookService
 
     private function findPhpBinary(): string
     {
-        // First try environment variable
-        $phpFromEnv = $_SERVER['PHP_BINARY'] ?? null;
-        if ($phpFromEnv && is_executable($phpFromEnv)) {
-            return $phpFromEnv;
+        $fromEnv = $_SERVER['PHP_BINARY'] ?? null;
+        if (is_string($fromEnv) && $fromEnv !== '' && is_executable($fromEnv)) {
+            return $fromEnv;
         }
 
-        // Platform-specific candidates - prefer system-wide installations
-        $isWindows = PHP_OS_FAMILY === 'Windows';
+        foreach ($this->phpBinaryCandidates() as $candidate) {
+            if (is_executable($candidate)) {
+                return $candidate;
+            }
+        }
 
-        if ($isWindows) {
-            // Windows-specific candidates - prefer simple names that work in PATH
-            $candidates = [
-                'php.exe',                           // Most portable - works if PHP is in PATH
-                'php',                              // Fallback without extension
+        $resolved = $this->resolveBinaryFromShell();
+        if ($resolved !== null) {
+            return $resolved;
+        }
+
+        return PHP_OS_FAMILY === 'Windows' ? 'php.exe' : 'php';
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function phpBinaryCandidates(): array
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            return [
+                'php.exe',
+                'php',
                 'C:\php\php.exe',
                 'C:\xampp\php\php.exe',
                 'C:\wamp\bin\php\php8.3\php.exe',
@@ -361,77 +358,50 @@ class HookService
                 'C:\laragon\bin\php\php8.2\php.exe',
                 'C:\laragon\bin\php\php8.1\php.exe',
             ];
-        } else {
-            // Unix-like systems - prefer simple name that works in PATH
-            $candidates = [
-                'php',                              // Most portable - works if PHP is in PATH
-                '/usr/bin/php',
-                '/usr/local/bin/php',
-                '/opt/homebrew/bin/php',            // For macOS with Homebrew
-                '/usr/bin/php8.3',
-                '/usr/bin/php8.2',
-                '/usr/bin/php8.1',
-            ];
         }
 
-        foreach ($candidates as $candidate) {
-            if (is_executable($candidate)) {
-                return $candidate;
-            }
-        }
-
-        // Try using which/where command based on platform
-        if ($isWindows) {
-            $whichResult = @exec('where php.exe 2>nul', $output, $exitCode);
-            if ($exitCode === 0 && !empty($whichResult) && is_executable($whichResult)) {
-                return $whichResult;
-            }
-            $whichResult = @exec('where php 2>nul', $output, $exitCode);
-            if ($exitCode === 0 && !empty($whichResult) && is_executable($whichResult)) {
-                return $whichResult;
-            }
-        } else {
-            $whichResult = @exec('which php 2>/dev/null', $output, $exitCode);
-            if ($exitCode === 0 && !empty($whichResult) && is_executable($whichResult)) {
-                return $whichResult;
-            }
-        }
-
-        // Platform-specific fallbacks
-        return $isWindows ? 'php.exe' : 'php';
+        return [
+            'php',
+            '/usr/bin/php',
+            '/usr/local/bin/php',
+            '/opt/homebrew/bin/php',
+            '/usr/bin/php8.3',
+            '/usr/bin/php8.2',
+            '/usr/bin/php8.1',
+        ];
     }
 
-    private function normalizePath(string $path): string
+    private function resolveBinaryFromShell(): ?string
     {
-        // Convert backslashes to forward slashes for consistent shell script paths
-        $normalized = str_replace('\\', '/', $path);
+        $commands = PHP_OS_FAMILY === 'Windows'
+            ? ['where php.exe 2>nul', 'where php 2>nul']
+            : ['which php 2>/dev/null'];
 
-        // Handle Windows drive letters (C: -> /c)
-        if (PHP_OS_FAMILY === 'Windows' && preg_match('/^([A-Za-z]):/', $normalized, $matches)) {
-            $driveLetter = strtolower($matches[1]);
-            $normalized = '/' . $driveLetter . substr($normalized, 2);
+        foreach ($commands as $cmd) {
+            $exitCode = 0;
+            $output = [];
+            $result = @exec($cmd, $output, $exitCode);
+            if ($exitCode === 0 && is_string($result) && $result !== '' && is_executable($result)) {
+                return $result;
+            }
         }
 
-        return $normalized;
+        return null;
     }
 
     private function findCommitlintBinary(): string
     {
-        $cwd = getcwd();
+        $cwd = getcwd() ?: '.';
         $isWindows = PHP_OS_FAMILY === 'Windows';
-
-        // Build binary name with platform-specific extension
         $binaryName = $isWindows ? 'php-commitlint.bat' : 'php-commitlint';
 
-        // Prefer relative paths for better portability
         $candidates = [
-            './bin/' . $binaryName,                // Development mode (relative)
-            'vendor/bin/' . $binaryName,           // Dependency mode (relative)
-            $cwd . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . $binaryName,          // Development mode (absolute fallback)
-            $cwd . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . $binaryName,   // Dependency mode (absolute fallback)
+            './bin/' . $binaryName,
+            'vendor/bin/' . $binaryName,
+            $cwd . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . $binaryName,
+            $cwd . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . $binaryName,
         ];
 
-        // Also try without extension on Windows (some installations may not have .bat)
         if ($isWindows) {
             $candidates[] = './bin/php-commitlint';
             $candidates[] = 'vendor/bin/php-commitlint';
@@ -440,34 +410,48 @@ class HookService
         }
 
         foreach ($candidates as $candidate) {
-            if (file_exists($candidate)) {
-                // On Windows, check if it's executable or if it's a .bat file
-                if ($isWindows) {
-                    if (is_readable($candidate) && (is_executable($candidate) || pathinfo($candidate, PATHINFO_EXTENSION) === 'bat')) {
-                        // For relative paths, return as-is for better portability
-                        if (str_starts_with($candidate, './') || str_starts_with($candidate, 'vendor/')) {
-                            return $candidate;
-                        }
-                        // For absolute paths, normalize
-                        $absolutePath = realpath($candidate) ?: $candidate;
-
-                        return $absolutePath;
-                    }
-                } else {
-                    if (is_executable($candidate)) {
-                        // For relative paths, return as-is for better portability
-                        if (str_starts_with($candidate, './') || str_starts_with($candidate, 'vendor/')) {
-                            return $candidate;
-                        }
-
-                        // For absolute paths, normalize
-                        return realpath($candidate) ?: $candidate;
-                    }
-                }
+            $resolved = $this->resolveCommitlintCandidate($candidate, $isWindows);
+            if ($resolved !== null) {
+                return $resolved;
             }
         }
 
-        // Return relative path as fallback for better portability
         return './bin/' . $binaryName;
+    }
+
+    private function resolveCommitlintCandidate(string $candidate, bool $isWindows): ?string
+    {
+        if (!file_exists($candidate)) {
+            return null;
+        }
+
+        if ($isWindows) {
+            $isUsable = is_readable($candidate)
+                && (is_executable($candidate) || pathinfo($candidate, PATHINFO_EXTENSION) === 'bat');
+        } else {
+            $isUsable = is_executable($candidate);
+        }
+
+        if (!$isUsable) {
+            return null;
+        }
+
+        if (str_starts_with($candidate, './') || str_starts_with($candidate, 'vendor/')) {
+            return $candidate;
+        }
+
+        return realpath($candidate) ?: $candidate;
+    }
+
+    private function normalizePath(string $path): string
+    {
+        $normalized = str_replace('\\', '/', $path);
+
+        if (PHP_OS_FAMILY === 'Windows' && preg_match('/^([A-Za-z]):/', $normalized, $matches)) {
+            $driveLetter = strtolower($matches[1]);
+            $normalized = '/' . $driveLetter . substr($normalized, 2);
+        }
+
+        return $normalized;
     }
 }

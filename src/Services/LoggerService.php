@@ -11,7 +11,19 @@ use Stringable;
 class LoggerService implements LoggerInterface
 {
     private const string LOG_FILE = '.git/php-commitlint.log';
-    private const int MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB
+    private const int MAX_LOG_SIZE = 5 * 1024 * 1024;
+
+    /** @var array<string, int> */
+    private const array LEVEL_WEIGHTS = [
+        LogLevel::DEBUG => 0,
+        LogLevel::INFO => 1,
+        LogLevel::NOTICE => 2,
+        LogLevel::WARNING => 3,
+        LogLevel::ERROR => 4,
+        LogLevel::CRITICAL => 5,
+        LogLevel::ALERT => 6,
+        LogLevel::EMERGENCY => 7,
+    ];
 
     private bool $enabled;
     private string $logFile;
@@ -74,13 +86,13 @@ class LoggerService implements LoggerInterface
 
         $timestamp = date('Y-m-d H:i:s');
         $formattedMessage = $this->interpolate((string) $message, $context);
-        $logEntry = "[{$timestamp}] {$level}: {$formattedMessage}" . PHP_EOL;
+        $entry = "[{$timestamp}] {$level}: {$formattedMessage}" . PHP_EOL;
 
-        if ($context) {
-            $logEntry .= "Context: " . json_encode($context, JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        if ($context !== []) {
+            $entry .= 'Context: ' . json_encode($context, JSON_UNESCAPED_SLASHES) . PHP_EOL;
         }
 
-        file_put_contents($this->logFile, $logEntry, FILE_APPEND | LOCK_EX);
+        file_put_contents($this->logFile, $entry, FILE_APPEND | LOCK_EX);
     }
 
     public function enable(): void
@@ -112,44 +124,41 @@ class LoggerService implements LoggerInterface
 
     private function shouldLog(string $level): bool
     {
-        $levels = [
-            LogLevel::DEBUG => 0,
-            LogLevel::INFO => 1,
-            LogLevel::NOTICE => 2,
-            LogLevel::WARNING => 3,
-            LogLevel::ERROR => 4,
-            LogLevel::CRITICAL => 5,
-            LogLevel::ALERT => 6,
-            LogLevel::EMERGENCY => 7,
-        ];
+        $messageWeight = self::LEVEL_WEIGHTS[$level] ?? 0;
+        $minWeight = self::LEVEL_WEIGHTS[$this->minLevel] ?? 0;
 
-        return ($levels[$level] ?? 0) >= ($levels[$this->minLevel] ?? 0);
+        return $messageWeight >= $minWeight;
     }
 
     private function rotateLogIfNeeded(): void
     {
-        if (!file_exists($this->logFile)) {
+        if (!file_exists($this->logFile) || filesize($this->logFile) <= self::MAX_LOG_SIZE) {
             return;
         }
 
-        if (filesize($this->logFile) > self::MAX_LOG_SIZE) {
-            $backupFile = $this->logFile . '.old';
-            if (file_exists($backupFile)) {
-                unlink($backupFile);
-            }
-            rename($this->logFile, $backupFile);
+        $backupFile = $this->logFile . '.old';
+        if (file_exists($backupFile)) {
+            unlink($backupFile);
         }
+        rename($this->logFile, $backupFile);
     }
 
     /**
-     * @param array<string, mixed> $context
+     * @param array<mixed, mixed> $context
      */
-    private function interpolate(string $message, array $context = []): string
+    private function interpolate(string $message, array $context): string
     {
+        if ($context === []) {
+            return $message;
+        }
+
         $replace = [];
         foreach ($context as $key => $val) {
-            if (!is_array($val) && (!is_object($val) || method_exists($val, '__toString'))) {
-                $replace['{' . $key . '}'] = $val;
+            if (!is_string($key)) {
+                continue;
+            }
+            if (is_scalar($val) || $val === null || (is_object($val) && method_exists($val, '__toString'))) {
+                $replace['{' . $key . '}'] = (string) $val;
             }
         }
 

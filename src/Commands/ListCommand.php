@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace DevKraken\PhpCommitlint\Commands;
 
+use DevKraken\PhpCommitlint\Commands\Concerns\RequiresGitRepository;
 use DevKraken\PhpCommitlint\Enums\ExitCode;
 use DevKraken\PhpCommitlint\ServiceContainer;
 use DevKraken\PhpCommitlint\Services\ConfigService;
@@ -23,6 +24,8 @@ use Throwable;
 )]
 final class ListCommand extends Command
 {
+    use RequiresGitRepository;
+
     private readonly HookService $hookService;
     private readonly ConfigService $configService;
     private readonly LoggerService $logger;
@@ -37,19 +40,9 @@ final class ListCommand extends Command
 
     protected function configure(): void
     {
-        $this->addOption(
-            'hooks-only',
-            null,
-            InputOption::VALUE_NONE,
-            'Show only hooks information'
-        );
-
-        $this->addOption(
-            'config-only',
-            null,
-            InputOption::VALUE_NONE,
-            'Show only configuration information'
-        );
+        $this
+            ->addOption('hooks-only', null, InputOption::VALUE_NONE, 'Show only hooks information')
+            ->addOption('config-only', null, InputOption::VALUE_NONE, 'Show only configuration information');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -62,7 +55,7 @@ final class ListCommand extends Command
         $io->title('📋 PHP CommitLint Status');
 
         try {
-            $this->validateGitRepository($io);
+            $this->assertGitRepository($this->hookService);
 
             if (!$configOnly) {
                 $this->displayHooksStatus($io, $verbose);
@@ -83,50 +76,36 @@ final class ListCommand extends Command
         }
     }
 
-    private function validateGitRepository(SymfonyStyle $io): void
-    {
-        if (!$this->hookService->isGitRepository()) {
-            throw new \RuntimeException('Not a Git repository!');
-        }
-    }
-
     private function displayHooksStatus(SymfonyStyle $io, bool $verbose): void
     {
         $io->section('🪝 Git Hooks Status');
 
         $hooks = $this->hookService->getInstalledHooks();
 
-        if (empty($hooks)) {
+        if ($hooks === []) {
             $io->note('No hooks found.');
 
             return;
         }
 
+        $headers = $verbose ? ['Hook', 'Status', 'Path'] : ['Hook', 'Status'];
+        $rows = [];
         $installedCount = 0;
-        $tableData = [];
 
         foreach ($hooks as $hookName => $info) {
-            $status = $info['installed'] ? '✅ Installed' : '❌ Not Installed';
-            $tableData[] = [$hookName, $status];
+            $row = [$hookName, $info['installed'] ? '✅ Installed' : '❌ Not Installed'];
+            if ($verbose) {
+                $row[] = $info['installed'] ? $info['path'] : '';
+            }
+            $rows[] = $row;
 
             if ($info['installed']) {
                 $installedCount++;
             }
-
-            if ($verbose && $info['installed']) {
-                $tableData[array_key_last($tableData)][] = $info['path'];
-            }
         }
 
-        $headers = ['Hook', 'Status'];
-        if ($verbose) {
-            $headers[] = 'Path';
-        }
-
-        $io->table($headers, $tableData);
-
-        $totalHooks = count($hooks);
-        $io->note(sprintf('Summary: %d of %d hooks installed', $installedCount, $totalHooks));
+        $io->table($headers, $rows);
+        $io->note(sprintf('Summary: %d of %d hooks installed', $installedCount, count($hooks)));
     }
 
     private function displayConfigurationStatus(SymfonyStyle $io, bool $verbose): void
@@ -142,18 +121,14 @@ final class ListCommand extends Command
 
         try {
             $config = $this->configService->loadConfig();
-            $configPath = $this->configService->getConfigPath();
-
             $io->definitionList(
-                ['Config file' => $configPath],
-                ['Auto install' => $config['auto_install'] ? 'Yes' : 'No']
+                ['Config file' => $this->configService->getConfigPath()],
+                ['Auto install' => ($config['auto_install'] ?? false) ? 'Yes' : 'No'],
             );
 
-            if ($verbose) {
-                $this->displayDetailedConfiguration($io, $config);
-            } else {
-                $this->displayBasicConfiguration($io, $config);
-            }
+            $verbose
+                ? $this->displayDetailedConfiguration($io, $config)
+                : $this->displayBasicConfiguration($io, $config);
         } catch (Throwable $e) {
             $io->error('Failed to load configuration: ' . $e->getMessage());
         }
@@ -164,17 +139,20 @@ final class ListCommand extends Command
      */
     private function displayBasicConfiguration(SymfonyStyle $io, array $config): void
     {
-        $rules = $config['rules'] ?? [];
-        $typeConfig = is_array($rules) ? ($rules['type'] ?? []) : [];
-        if (is_array($typeConfig) && isset($typeConfig['allowed']) && is_array($typeConfig['allowed'])) {
-            $io->text(sprintf('Allowed types: %s', implode(', ', $typeConfig['allowed'])));
+        $rules = is_array($config['rules'] ?? null) ? $config['rules'] : [];
+
+        $typeConfig = is_array($rules['type'] ?? null) ? $rules['type'] : [];
+        $allowedTypes = $this->stringList($typeConfig['allowed'] ?? null);
+        if ($allowedTypes !== []) {
+            $io->text(sprintf('Allowed types: %s', implode(', ', $allowedTypes)));
         }
 
-        $scopeConfig = is_array($rules) ? ($rules['scope'] ?? []) : [];
-        if (is_array($scopeConfig) && ($scopeConfig['required'] ?? false)) {
+        $scopeConfig = is_array($rules['scope'] ?? null) ? $rules['scope'] : [];
+        if (($scopeConfig['required'] ?? false) === true) {
             $io->text('Scope: Required');
-            if (isset($scopeConfig['allowed']) && is_array($scopeConfig['allowed']) && !empty($scopeConfig['allowed'])) {
-                $io->text(sprintf('Allowed scopes: %s', implode(', ', $scopeConfig['allowed'])));
+            $allowedScopes = $this->stringList($scopeConfig['allowed'] ?? null);
+            if ($allowedScopes !== []) {
+                $io->text(sprintf('Allowed scopes: %s', implode(', ', $allowedScopes)));
             }
         } else {
             $io->text('Scope: Optional');
@@ -186,41 +164,63 @@ final class ListCommand extends Command
      */
     private function displayDetailedConfiguration(SymfonyStyle $io, array $config): void
     {
-        $rules = $config['rules'] ?? [];
+        $this->displaySection($io, 'Rules', $config['rules'] ?? null, true);
+        $this->displaySection($io, 'Patterns', $config['patterns'] ?? null, false);
+        $this->displaySection($io, 'Hook Configuration', $this->mapHooksToStatus($config['hooks'] ?? null), false);
+    }
 
-        if (!empty($rules) && is_array($rules)) {
-            $io->text('<info>Rules:</info>');
+    private function displaySection(SymfonyStyle $io, string $title, mixed $values, bool $jsonEncode): void
+    {
+        if (!is_array($values) || $values === []) {
+            return;
+        }
 
-            foreach ($rules as $ruleName => $ruleConfig) {
-                if (is_array($ruleConfig)) {
-                    $io->text(sprintf('  %s: %s', $ruleName, json_encode($ruleConfig, JSON_UNESCAPED_SLASHES)));
-                }
+        $io->newLine();
+        $io->text(sprintf('<info>%s:</info>', $title));
+
+        foreach ($values as $key => $value) {
+            if (!is_string($key)) {
+                continue;
+            }
+
+            $rendered = $jsonEncode && is_array($value)
+                ? json_encode($value, JSON_UNESCAPED_SLASHES)
+                : (is_scalar($value) ? (string) $value : null);
+
+            if ($rendered !== null && $rendered !== false) {
+                $io->text(sprintf('  %s: %s', $key, $rendered));
+            }
+        }
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function stringList(mixed $value): array
+    {
+        if (!is_array($value)) {
+            return [];
+        }
+
+        return array_values(array_filter($value, 'is_string'));
+    }
+
+    /**
+     * @return array<string, string>|null
+     */
+    private function mapHooksToStatus(mixed $hooks): ?array
+    {
+        if (!is_array($hooks)) {
+            return null;
+        }
+
+        $mapped = [];
+        foreach ($hooks as $name => $enabled) {
+            if (is_string($name)) {
+                $mapped[$name] = $enabled ? 'Enabled' : 'Disabled';
             }
         }
 
-        $patterns = $config['patterns'] ?? [];
-        if (is_array($patterns) && !empty($patterns)) {
-            $io->newLine();
-            $io->text('<info>Patterns:</info>');
-
-            foreach ($patterns as $patternName => $pattern) {
-                if (is_string($patternName) && (is_string($pattern) || is_numeric($pattern))) {
-                    $io->text(sprintf('  %s: %s', $patternName, (string) $pattern));
-                }
-            }
-        }
-
-        $hooks = $config['hooks'] ?? [];
-        if (is_array($hooks) && !empty($hooks)) {
-            $io->newLine();
-            $io->text('<info>Hook Configuration:</info>');
-
-            foreach ($hooks as $hookName => $enabled) {
-                if (is_string($hookName)) {
-                    $status = $enabled ? 'Enabled' : 'Disabled';
-                    $io->text(sprintf('  %s: %s', $hookName, $status));
-                }
-            }
-        }
+        return $mapped;
     }
 }

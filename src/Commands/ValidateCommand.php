@@ -28,42 +28,28 @@ final class ValidateCommand extends Command
 {
     private const string DEFAULT_COMMIT_MSG_FILE = '.git/COMMIT_EDITMSG';
 
+    /** @var list<string> */
+    private const array FALLBACK_TYPES = ['feat', 'fix', 'docs', 'style', 'refactor', 'test', 'chore'];
+
     public function __construct(
         private readonly ValidationService $validationService,
         private readonly ConfigService $configService,
-        private readonly LoggerService $logger
+        private readonly LoggerService $logger,
     ) {
         parent::__construct();
     }
 
     protected function configure(): void
     {
-        $this->addArgument(
-            'message',
-            InputArgument::OPTIONAL,
-            'Commit message to validate (if not provided, will read from .git/COMMIT_EDITMSG)'
-        );
-
-        $this->addOption(
-            'file',
-            'f',
-            InputOption::VALUE_REQUIRED,
-            'Read commit message from file'
-        );
-
-        $this->addOption(
-            'quiet',
-            'q',
-            InputOption::VALUE_NONE,
-            'Suppress output (exit code only)'
-        );
-
-        $this->addOption(
-            'verbose-errors',
-            null,
-            InputOption::VALUE_NONE,
-            'Show detailed error information'
-        );
+        $this
+            ->addArgument(
+                'message',
+                InputArgument::OPTIONAL,
+                'Commit message to validate (if not provided, will read from .git/COMMIT_EDITMSG)'
+            )
+            ->addOption('file', 'f', InputOption::VALUE_REQUIRED, 'Read commit message from file')
+            ->addOption('quiet', 'q', InputOption::VALUE_NONE, 'Suppress output (exit code only)')
+            ->addOption('verbose-errors', null, InputOption::VALUE_NONE, 'Show detailed error information');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -75,7 +61,7 @@ final class ValidateCommand extends Command
         try {
             $message = $this->getCommitMessage($input);
 
-            if (empty(trim($message))) {
+            if (trim($message) === '') {
                 return $this->handleEmptyMessage($io, $quiet);
             }
 
@@ -97,6 +83,33 @@ final class ValidateCommand extends Command
         }
     }
 
+    private function getCommitMessage(InputInterface $input): string
+    {
+        $message = $input->getArgument('message');
+        if (is_string($message)) {
+            return trim($message);
+        }
+
+        $file = $input->getOption('file');
+        $path = is_string($file) ? $file : self::DEFAULT_COMMIT_MSG_FILE;
+
+        return $this->readMessageFromFile($path);
+    }
+
+    private function readMessageFromFile(string $filePath): string
+    {
+        if (!file_exists($filePath)) {
+            throw new InvalidArgumentException("File not found: {$filePath}");
+        }
+
+        $content = file_get_contents($filePath);
+        if ($content === false) {
+            throw new RuntimeException("Failed to read file: {$filePath}");
+        }
+
+        return trim($content);
+    }
+
     private function handleEmptyMessage(SymfonyStyle $io, bool $quiet): int
     {
         $this->logger->warning('Empty commit message provided');
@@ -115,16 +128,18 @@ final class ValidateCommand extends Command
             'scope' => $result->getScope(),
         ]);
 
-        if (!$quiet) {
-            $io->success('✅ Commit message is valid!');
+        if ($quiet) {
+            return ExitCode::SUCCESS->value;
+        }
 
-            if ($result->getType()) {
-                $io->note(sprintf('Type: %s', $result->getType()));
-            }
+        $io->success('✅ Commit message is valid!');
 
-            if ($result->getScope()) {
-                $io->note(sprintf('Scope: %s', $result->getScope()));
-            }
+        if ($result->getType() !== null) {
+            $io->note(sprintf('Type: %s', $result->getType()));
+        }
+
+        if ($result->getScope() !== null) {
+            $io->note(sprintf('Scope: %s', $result->getScope()));
         }
 
         return ExitCode::SUCCESS->value;
@@ -138,7 +153,7 @@ final class ValidateCommand extends Command
         ValidationResult $result,
         array $config,
         bool $quiet,
-        bool $verboseErrors
+        bool $verboseErrors,
     ): int {
         $this->logger->warning('Commit message validation failed', [
             'errors' => $result->getErrors(),
@@ -184,35 +199,6 @@ final class ValidateCommand extends Command
         }
     }
 
-    private function getCommitMessage(InputInterface $input): string
-    {
-        $message = $input->getArgument('message');
-        if (is_string($message)) {
-            return trim($message);
-        }
-
-        $file = $input->getOption('file');
-        if (is_string($file)) {
-            return $this->readMessageFromFile($file);
-        }
-
-        return $this->readMessageFromFile(self::DEFAULT_COMMIT_MSG_FILE);
-    }
-
-    private function readMessageFromFile(string $filePath): string
-    {
-        if (!file_exists($filePath)) {
-            throw new InvalidArgumentException("File not found: {$filePath}");
-        }
-
-        $content = file_get_contents($filePath);
-        if ($content === false) {
-            throw new RuntimeException("Failed to read file: {$filePath}");
-        }
-
-        return trim($content);
-    }
-
     /**
      * @param array<string, mixed> $config
      */
@@ -220,20 +206,7 @@ final class ValidateCommand extends Command
     {
         $io->section('💡 Examples of valid commit messages:');
 
-        $rules = $config['rules'] ?? [];
-        $typeConfig = is_array($rules) ? ($rules['type'] ?? []) : [];
-        $allowedTypes = [];
-
-        if (is_array($typeConfig) && isset($typeConfig['allowed']) && is_array($typeConfig['allowed'])) {
-            $allowedTypes = $typeConfig['allowed'];
-        } else {
-            $allowedTypes = ['feat', 'fix', 'docs', 'style', 'refactor', 'test', 'chore'];
-        }
-
-        if (!is_array($allowedTypes) || empty($allowedTypes)) {
-            $allowedTypes = ['feat', 'fix'];
-        }
-
+        $allowedTypes = $this->resolveAllowedTypes($config);
         $firstType = $allowedTypes[0] ?? 'feat';
         $secondType = $allowedTypes[1] ?? 'fix';
 
@@ -249,5 +222,22 @@ final class ValidateCommand extends Command
 
         $io->newLine();
         $io->text('For more information, check your .commitlintrc.json configuration file.');
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     * @return list<string>
+     */
+    private function resolveAllowedTypes(array $config): array
+    {
+        $rules = is_array($config['rules'] ?? null) ? $config['rules'] : [];
+        $typeConfig = is_array($rules['type'] ?? null) ? $rules['type'] : [];
+        $allowed = $typeConfig['allowed'] ?? null;
+
+        if (is_array($allowed) && $allowed !== []) {
+            return array_values(array_filter($allowed, 'is_string'));
+        }
+
+        return self::FALLBACK_TYPES;
     }
 }

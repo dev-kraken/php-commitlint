@@ -12,7 +12,6 @@ beforeEach(function () {
     // Clear the singleton instance before each test
     $reflection = new ReflectionClass(ServiceContainer::class);
     $instance = $reflection->getProperty('instance');
-    $instance->setAccessible(true);
     $instance->setValue(null, null);
 });
 

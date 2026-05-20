@@ -37,7 +37,9 @@ beforeEach(
         );
 
         $application = new Application();
-        $application->add($this->command);
+        method_exists($application, 'addCommand')
+            ? $application->addCommand($this->command)
+            : $application->add($this->command);
 
         $this->commandTester = new CommandTester($this->command);
     }
@@ -294,7 +296,9 @@ describe('ValidateCommand', function () {
             );
 
             $application = new Application();
-            $application->add($command);
+            method_exists($application, 'addCommand')
+                ? $application->addCommand($command)
+                : $application->add($command);
             $commandTester = new CommandTester($command);
 
             $this->mockValidationService
